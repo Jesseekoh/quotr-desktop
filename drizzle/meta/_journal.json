@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1792868443501,
+      "tag": "0000_famous_magdalene",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792869889163,
+      "tag": "0001_brand_contact_details",
+      "breakpoints": true
+    }
+  ]
+}
