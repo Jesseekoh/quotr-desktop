@@ -1,4 +1,11 @@
-import { check, index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import {
+	check,
+	index,
+	integer,
+	sqliteTable,
+	text,
+	type AnySQLiteColumn
+} from 'drizzle-orm/sqlite-core';
 import { sql, relations } from 'drizzle-orm';
 import { createId } from '@paralleldrive/cuid2';
 export const priceLabels = [
@@ -15,18 +22,8 @@ export type QuoteStatus = (typeof quoteStatuses)[number];
 export const invoiceStatuses = ['UNPAID', 'PAID', 'VOID'] as const;
 export type InvoiceStatus = (typeof invoiceStatuses)[number];
 
-export const productCategories = [
-	'SOLAR_PANEL',
-	'INVERTER',
-	'CHARGE_CONTROLLER',
-	'BATTERY',
-	'RACK_MOUNTING',
-	'CABLE',
-	'CABINET',
-	'ACCESSORY',
-	'OTHER'
-] as const;
-export type ProductCategory = (typeof productCategories)[number];
+/** A `category.id`. Categories live in their own table so new ones need no migration. */
+export type ProductCategory = string;
 
 const timestamps = {
 	createdAt: integer('created_at', { mode: 'timestamp_ms' })
@@ -49,9 +46,8 @@ export const product = sqliteTable(
 
 		brand: text('brand').notNull(),
 
-		category: text('category', {
-			enum: productCategories
-		}).notNull(),
+		// References category.id (checked in the API, not by a foreign key).
+		category: text('category').notNull(),
 
 		specification: text('specification').notNull(),
 
@@ -63,8 +59,7 @@ export const product = sqliteTable(
 
 		unit: text('unit').default('pcs'),
 
-		// Store money as integer minor units.
-		// e.g. ₦150,000.50 -> 15000050
+		// Money is stored as whole naira, e.g. ₦150,000 -> 150000.
 		costPrice: integer('cost_price').notNull(),
 
 		discountPrice: integer('discount_price').notNull(),
@@ -74,6 +69,14 @@ export const product = sqliteTable(
 		specialPrice: integer('special_price').notNull(),
 
 		enduserPrice: integer('enduser_price').notNull(),
+
+		// Hand-set sell prices: markup and rounding changes leave them alone.
+		manualPrices: integer('manual_prices', { mode: 'boolean' }).notNull().default(false),
+
+		supplier: text('supplier'),
+
+		// When the cost price was last confirmed (the price list's "Last Updated").
+		priceUpdatedAt: integer('price_updated_at', { mode: 'timestamp_ms' }),
 
 		isActive: integer('is_active', {
 			mode: 'boolean'
@@ -90,29 +93,40 @@ export const product = sqliteTable(
 );
 
 // ─────────────────────────────────────────────
-// Category Markup
+// Category
 //
-// One row per product category, holding the markup (in basis points, where
-// 3000 = 30%) applied to a product's cost price to derive each sell price.
-// Changing a markup recalculates every sell price of the products in that
-// category: price = round(costPrice * (1 + markup / 10000)).
+// Product categories, one level of subcategories deep. Each top-level
+// category holds the markup (in basis points, where 3000 = 30%) applied to a
+// product's cost price to derive each sell price. A subcategory either has its
+// own markups or leaves them NULL to inherit its parent's. Changing a markup
+// recalculates the sell prices of every product that uses it:
+// price = cost * (1 + markup / 10000), rounded to the price rounding step.
 // ─────────────────────────────────────────────
 
-export const categoryMarkup = sqliteTable('category_markup', {
-	category: text('category', {
-		enum: productCategories
-	}).primaryKey(),
+export const category = sqliteTable(
+	'category',
+	{
+		// Stable slug, e.g. 'HYBRID_INVERTER'. Products and quote items store it.
+		id: text('id').primaryKey(),
 
-	enduserPct: integer('enduser_pct').notNull().default(3000),
+		name: text('name').notNull(),
 
-	discountPct: integer('discount_pct').notNull().default(2500),
+		parentId: text('parent_id').references((): AnySQLiteColumn => category.id),
 
-	resalePct: integer('resale_pct').notNull().default(2000),
+		enduserPct: integer('enduser_pct'),
 
-	specialPct: integer('special_pct').notNull().default(1500),
+		discountPct: integer('discount_pct'),
 
-	...timestamps
-});
+		resalePct: integer('resale_pct'),
+
+		specialPct: integer('special_pct'),
+
+		sortOrder: integer('sort_order').notNull().default(0),
+
+		...timestamps
+	},
+	(table) => [index('category_parent_id_idx').on(table.parentId)]
+);
 
 // ─────────────────────────────────────────────
 // Customer
@@ -277,9 +291,7 @@ export const quoteItem = sqliteTable(
 
 		specification: text('specification'),
 
-		category: text('category', {
-			enum: productCategories
-		}),
+		category: text('category'),
 
 		quantity: integer('quantity').notNull().default(1),
 
@@ -404,6 +416,10 @@ export const brandSettings = sqliteTable(
 		phone: text('phone'),
 
 		address: text('address'),
+
+		// Sell prices derived from markups are rounded to the nearest multiple of
+		// this many naira (the price list uses MROUND(..., 1000)).
+		priceRoundingStep: integer('price_rounding_step').notNull().default(1000),
 
 		// Set when the first-run setup finishes; the app shell redirects to
 		// onboarding until then.

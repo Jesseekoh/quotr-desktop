@@ -11,7 +11,6 @@
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
-	import * as Select from '#lib/components/ui/select/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
@@ -20,11 +19,12 @@
 	import { cn } from '#lib/utils.js';
 	import { IconCheck } from '@tabler/icons-svelte';
 
-	import { getProducts } from '#lib/api/products.js';
-	import { getProductPriceForLabel, PRODUCT_CATEGORY_OPTIONS } from '#lib/utils/pricing.js';
-	import { formatNaira, categoryLabel } from '#lib/utils/format.js';
+	import { getCategories, getProducts, type CategoryWithMarkup } from '#lib/api/products.js';
+	import { getProductPriceForLabel } from '#lib/utils/pricing.js';
+	import { formatNaira } from '#lib/utils/format.js';
+	import CategorySelect from '#lib/components/product/category-select.svelte';
 	import type { PriceLabel } from '#lib/api/types.js';
-	import type { Product } from '#lib/api/types.js';
+	import type { CatalogProduct as Product } from '#lib/api/types.js';
 	import type { CreateItemPayload } from '#lib/api/quotes.js';
 
 	let {
@@ -46,8 +46,9 @@
 	// --- Catalog tab -------------------------------------------------
 
 	let search = $state('');
-	// '__all__' is a sentinel: bits-ui's Select can't use '' as a real value.
-	let categoryFilter = $state('__all__');
+	// '' means all categories.
+	let categoryFilter = $state('');
+	let categories = $state<CategoryWithMarkup[]>([]);
 	let products = $state<Product[]>([]);
 	let searching = $state(false);
 	let selectedProduct = $state<Product | null>(null);
@@ -59,10 +60,9 @@
 	async function runSearch() {
 		searching = true;
 		try {
-			const category = categoryFilter === '__all__' ? undefined : categoryFilter;
 			products = await getProducts({
 				search: search || undefined,
-				category: category as Product['category'] | undefined
+				category: categoryFilter || undefined
 			});
 			// products = await searchProducts({
 			// 	search: search || undefined,
@@ -86,6 +86,7 @@
 	onMount(() => {
 		hasMounted = true;
 		void runSearch();
+		getCategories().then((rows) => (categories = rows));
 		return () => clearTimeout(searchTimer);
 	});
 
@@ -100,7 +101,7 @@
 		columnHelper.accessor('specification', { header: 'Description' }),
 		columnHelper.accessor('category', {
 			header: 'Category',
-			cell: (info) => categoryLabel(info.row.original.category)
+			cell: (info) => info.row.original.categoryName ?? '—'
 		}),
 		columnHelper.display({
 			id: 'price',
@@ -145,7 +146,7 @@
 	function resetForm() {
 		activeTab = 'catalog';
 		search = '';
-		categoryFilter = '__all__';
+		categoryFilter = '';
 		selectedProduct = null;
 		quantity = 1;
 		description = '';
@@ -195,17 +196,13 @@
 				<form class="flex min-w-0 flex-col gap-3 pt-3" onsubmit={submitCatalog}>
 					<div class="flex gap-2">
 						<Input placeholder="Search products…" bind:value={search} class="flex-1" />
-						<Select.Root type="single" bind:value={categoryFilter}>
-							<Select.Trigger class="w-48">
-								{categoryFilter === '__all__' ? 'All categories' : categoryLabel(categoryFilter)}
-							</Select.Trigger>
-							<Select.Content>
-								<Select.Item value="__all__">All categories</Select.Item>
-								{#each PRODUCT_CATEGORY_OPTIONS as c (c)}
-									<Select.Item value={c}>{categoryLabel(c)}</Select.Item>
-								{/each}
-							</Select.Content>
-						</Select.Root>
+						<CategorySelect
+							{categories}
+							value={categoryFilter}
+							onValueChange={(v) => (categoryFilter = v)}
+							allLabel="All categories"
+							class="w-48"
+						/>
 					</div>
 
 					<div class="max-h-64 max-w-full min-w-0 overflow-auto rounded-md border">

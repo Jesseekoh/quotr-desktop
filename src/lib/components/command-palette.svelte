@@ -15,9 +15,9 @@
 	import { getQuotes } from '#lib/api/quotes.js';
 	import { getInvoices } from '#lib/api/invoices.js';
 	import { getProducts } from '#lib/api/products.js';
-	import type { Product } from '#lib/api/types.js';
+	import type { CatalogProduct } from '#lib/api/types.js';
 	import { shortcutLabel } from '#lib/hooks/shortcuts.js';
-	import { categoryLabel, formatNaira } from '#lib/utils/format.js';
+	import { formatNaira } from '#lib/utils/format.js';
 
 	let { open = $bindable(false) }: { open?: boolean } = $props();
 
@@ -26,7 +26,7 @@
 	let search = $state('');
 	let quotes = $state<Entry[]>([]);
 	let invoices = $state<Entry[]>([]);
-	let products = $state<Product[]>([]);
+	let products = $state<CatalogProduct[]>([]);
 
 	// Quotes and invoices are few enough to load whole; refresh on every open.
 	$effect(() => {
@@ -175,7 +175,7 @@
 							<span class="text-muted-foreground">· {product.specification}</span>
 						</span>
 						<span class="shrink-0 text-xs text-muted-foreground">
-							{categoryLabel(product.category)} · {formatNaira(product.enduserPrice)}
+							{product.categoryName ?? 'Uncategorised'} · {formatNaira(product.enduserPrice)}
 						</span>
 					</Command.Item>
 				{/each}

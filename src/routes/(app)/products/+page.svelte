@@ -13,7 +13,6 @@
 		renderComponent
 	} from '@tanstack/svelte-table';
 	import { goto, invalidateAll } from '$app/navigation';
-	import * as Select from '#lib/components/ui/select/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -21,38 +20,33 @@
 	import { Label } from '#lib/components/ui/label/index.js';
 	import { features, type DashboardTableFeatures } from '#lib/components/data-table-features.js';
 	import { resolve } from '$app/paths';
-	import type { Product } from '#lib/api/types.js';
-	import { deleteProduct } from '#lib/api/products.js';
+	import type { CatalogProduct as Product } from '#lib/api/types.js';
+	import { deleteProduct, deleteProducts } from '#lib/api/products.js';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import { confirm } from '#lib/hooks/confirm.svelte.js';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import CreateProductForm from '#lib/components/create-product-form.svelte';
 	import MarkupSettings from '#lib/components/product/markup-settings.svelte';
 	import ImportProducts from '#lib/components/product/import-products.svelte';
 	import SpecCell from '#lib/components/product/spec-cell.svelte';
-	import { PRODUCT_CATEGORIES } from '#lib/utils/pricing.js';
+	import CategorySelect from '#lib/components/product/category-select.svelte';
 	import { toast } from 'svelte-sonner';
 
 	let { data } = $props();
 
 	// --- Filter state, seeded from the URL ---
 	// svelte-ignore state_referenced_locally
-	let category = $state(data.category);
+	let category = $state(data.category ?? '');
 	// svelte-ignore state_referenced_locally
 	let search = $state(data.search);
-
-	const CATEGORIES = [
-		{ value: '', label: 'All Categories' },
-		...PRODUCT_CATEGORIES.map((c) => ({ value: c.value as string, label: c.label }))
-	];
-
-	let categoryLabel = $derived(
-		CATEGORIES.find((c) => c.value === category)?.label ?? 'All Categories'
-	);
 
 	/** Navigate with updated query params — lets the server re-run the load. */
 	function applyFilters() {
 		visibleCount = PAGE_STEP;
+		// A selection made under other filters would include rows no longer on screen.
+		table.resetRowSelection();
+		lastToggled = null;
 		const params = new SvelteURLSearchParams();
 		if (category) params.set('category', category);
 		if (search) params.set('search', search);
@@ -85,9 +79,16 @@
 		}).format(n);
 	}
 
-	/** Pretty-print a SCREAMING_SNAKE category enum value. */
-	function fmtCategory(cat: string): string {
-		return CATEGORIES.find((c) => c.value === cat)?.label ?? cat;
+	/** Cost prices older than this are flagged so they get re-checked. */
+	const STALE_AFTER_DAYS = 180;
+
+	function fmtPriceDate(date: Date | null) {
+		if (!date) return '—';
+		return new Intl.DateTimeFormat('en-NG', { dateStyle: 'medium' }).format(date);
+	}
+
+	function isStale(date: Date | null) {
+		return date !== null && Date.now() - date.getTime() > STALE_AFTER_DAYS * 86_400_000;
 	}
 
 	// --- TanStack Table v9 setup ---
@@ -97,16 +98,14 @@
 	const columnHelper = createColumnHelper<DashboardTableFeatures, Product>();
 
 	const columns = columnHelper.columns([
-		// columnHelper.accessor('name', {
-		// 	header: 'Name',
-		// 	enableHiding: false
-		// }),
+		// Checkboxes are drawn in the template, which owns the click handling.
+		columnHelper.display({ id: 'select', header: '' }),
 		columnHelper.accessor('brand', {
 			header: 'Brand'
 		}),
-		columnHelper.accessor('category', {
+		columnHelper.accessor('categoryName', {
 			header: 'Category',
-			cell: ({ getValue }) => fmtCategory(getValue())
+			cell: ({ getValue }) => getValue() ?? '—'
 		}),
 		columnHelper.accessor('specification', {
 			header: 'Specification',
@@ -135,6 +134,13 @@
 		columnHelper.accessor('specialPrice', {
 			header: 'Special Price',
 			cell: ({ getValue }) => fmt(getValue())
+		}),
+		columnHelper.accessor('supplier', {
+			header: 'Supplier',
+			cell: ({ getValue }) => getValue() || '—'
+		}),
+		columnHelper.accessor('priceUpdatedAt', {
+			header: 'Price Date'
 		})
 	]);
 
@@ -149,6 +155,66 @@
 		// it starts small and grows as the user scrolls.
 		initialState: { pagination: { pageIndex: 0, pageSize: PAGE_STEP } }
 	});
+
+	// --- Selection ---
+	const selectedRows = $derived(table.getSelectedRowModel().rows);
+	const allSelected = $derived(table.getIsAllRowsSelected());
+	const someSelected = $derived(selectedRows.length > 0 && !allSelected);
+
+	/** Index of the last row toggled, the anchor for shift-click ranges. */
+	let lastToggled: number | null = null;
+
+	function onRowCheck(e: MouseEvent, index: number) {
+		// The table's selection state is the source of truth, not the checkbox's own.
+		e.preventDefault();
+		const rows = table.getRowModel().rows;
+		const next = !rows[index].getIsSelected();
+		if (e.shiftKey && lastToggled !== null) {
+			const [from, to] = [Math.min(lastToggled, index), Math.max(lastToggled, index)];
+			table.setRowSelection((prev) => {
+				const sel = { ...prev };
+				for (const row of rows.slice(from, to + 1)) {
+					if (next) sel[row.id] = true;
+					else delete sel[row.id];
+				}
+				return sel;
+			});
+		} else {
+			rows[index].toggleSelected(next);
+		}
+		lastToggled = index;
+	}
+
+	function onAllCheck(e: MouseEvent) {
+		e.preventDefault();
+		table.toggleAllRowsSelected(!allSelected);
+		lastToggled = null;
+	}
+
+	function clearSelection() {
+		table.resetRowSelection();
+		lastToggled = null;
+	}
+
+	async function handleDeleteSelected() {
+		const products = selectedRows.map((r) => r.original);
+		const count = products.length;
+		const confirmed = await confirm({
+			title: `Delete ${count} product${count === 1 ? '' : 's'}?`,
+			description: `${count === 1 ? 'It' : 'They'} will be removed from your catalog. Quotes already created keep their recorded prices.`,
+			confirmLabel: 'Delete',
+			destructive: true
+		});
+		if (!confirmed) return;
+		try {
+			await deleteProducts(products.map((p) => p.id));
+			clearSelection();
+			toast.success(`${count} product${count === 1 ? '' : 's'} removed from catalog`);
+			invalidateAll();
+		} catch {
+			toast.error('Failed to delete products');
+		}
+	}
 
 	// --- Infinite scroll ---
 	let visibleCount = $state(PAGE_STEP);
@@ -202,6 +268,7 @@
 		if (!confirmed) return;
 		try {
 			await deleteProduct(product.id);
+			table.getRow(product.id, true)?.toggleSelected(false);
 			toast.success('Product removed from catalog');
 			invalidateAll();
 		} catch {
@@ -228,17 +295,14 @@
 			<div class="flex flex-col gap-3 px-4 sm:flex-row sm:items-end lg:px-6">
 				<div class="flex flex-col gap-1.5">
 					<Label for="category-filter" class="text-sm font-medium">Category</Label>
-					<!-- <Select.Root type="single" bind:value={() => category, onCategoryChange}> -->
-					<Select.Root type="single" value={category} onValueChange={onCategoryChange}>
-						<Select.Trigger class="w-50" id="category-filter">
-							{categoryLabel}
-						</Select.Trigger>
-						<Select.Content>
-							{#each CATEGORIES as cat (cat.value)}
-								<Select.Item value={cat.value}>{cat.label}</Select.Item>
-							{/each}
-						</Select.Content>
-					</Select.Root>
+					<CategorySelect
+						id="category-filter"
+						categories={data.categories}
+						value={category}
+						onValueChange={onCategoryChange}
+						allLabel="All Categories"
+						class="w-50"
+					/>
 				</div>
 
 				<div class="relative flex-1 sm:max-w-sm">
@@ -268,7 +332,7 @@
 						</Dialog.Trigger>
 						<Dialog.Content class="max-h-[90vh] max-w-2xl overflow-y-auto">
 							<Dialog.Header>
-								<Dialog.Title>Category Markups</Dialog.Title>
+								<Dialog.Title>Categories &amp; Markups</Dialog.Title>
 								<Dialog.Description>
 									Markup percentage per price tier, applied to each product's cost price.
 								</Dialog.Description>
@@ -321,17 +385,44 @@
 
 			<!-- Data table -->
 			<div class="px-4 lg:px-6">
+				{#if selectedRows.length > 0}
+					<div
+						class="mb-2 flex items-center gap-3 rounded-lg border bg-muted/50 px-3 py-2 text-sm"
+						role="status"
+					>
+						<span class="font-medium">
+							{selectedRows.length} selected
+						</span>
+						<Button variant="ghost" size="sm" onclick={clearSelection}>Clear</Button>
+						<Button variant="destructive" size="sm" class="ml-auto" onclick={handleDeleteSelected}>
+							<TrashIcon class="size-4" />
+							Delete selected
+						</Button>
+					</div>
+				{/if}
 				<div class="overflow-hidden rounded-lg border">
 					<Table.Root>
 						<Table.Header class="bg-muted">
 							{#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
 								<Table.Row>
 									{#each headerGroup.headers as header (header.id)}
-										<Table.Head colspan={header.colSpan}>
-											{#if !header.isPlaceholder}
-												<FlexRender {header} />
-											{/if}
-										</Table.Head>
+										{#if header.column.id === 'select'}
+											<Table.Head class="w-10">
+												<Checkbox
+													checked={allSelected}
+													indeterminate={someSelected}
+													disabled={data.products.length === 0}
+													onclick={onAllCheck}
+													aria-label="Select all {data.products.length} products"
+												/>
+											</Table.Head>
+										{:else}
+											<Table.Head colspan={header.colSpan}>
+												{#if !header.isPlaceholder}
+													<FlexRender {header} />
+												{/if}
+											</Table.Head>
+										{/if}
 									{/each}
 									<Table.Head class="w-16 text-right">
 										<span class="sr-only">Actions</span>
@@ -341,11 +432,29 @@
 						</Table.Header>
 						<Table.Body>
 							{#if table.getRowModel().rows?.length}
-								{#each table.getRowModel().rows as row (row.id)}
-									<Table.Row>
+								{#each table.getRowModel().rows as row, index (row.id)}
+									<Table.Row data-state={row.getIsSelected() ? 'selected' : undefined}>
 										{#each row.getVisibleCells() as cell (cell.id)}
 											<Table.Cell>
-												<FlexRender {cell} />
+												{#if cell.column.id === 'select'}
+													<Checkbox
+														checked={row.getIsSelected()}
+														onclick={(e) => onRowCheck(e, index)}
+														aria-label="Select {row.original.brand} {row.original.specification}"
+													/>
+												{:else if cell.column.id === 'priceUpdatedAt'}
+													{@const date = row.original.priceUpdatedAt}
+													<span
+														class={isStale(date) ? 'text-amber-600 dark:text-amber-400' : ''}
+														title={isStale(date)
+															? `Older than ${STALE_AFTER_DAYS} days — worth re-checking`
+															: undefined}
+													>
+														{fmtPriceDate(date)}
+													</span>
+												{:else}
+													<FlexRender {cell} />
+												{/if}
 											</Table.Cell>
 										{/each}
 										<Table.Cell class="text-right whitespace-nowrap">

@@ -1,14 +1,19 @@
 <script lang="ts">
-	import { createProduct, updateProduct, getMarkups } from '#lib/api/products.js';
+	import {
+		createProduct,
+		updateProduct,
+		getCategories,
+		type CategoryWithMarkup
+	} from '#lib/api/products.js';
+	import { getPriceRoundingStep } from '#lib/api/settings.js';
 	import type { Product } from '#lib/api/types.js';
 	import { type ProductCategory } from '#lib/db/schema.js';
-	import { priceFromMarkup, type MarkupPcts } from '#lib/utils/markups.js';
-	import { PRODUCT_CATEGORIES } from '#lib/utils/pricing.js';
+	import { priceFromMarkup } from '#lib/utils/markups.js';
+	import CategorySelect from '#lib/components/product/category-select.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Label } from '#lib/components/ui/label/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
-	import * as Select from '#lib/components/ui/select/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { toast } from 'svelte-sonner';
 
@@ -43,31 +48,35 @@
 	// svelte-ignore state_referenced_locally
 	let specialPrice = $state(product !== undefined ? String(product.specialPrice) : '');
 
-	// Prices track the category markups until the user types one by hand.
-	// New products follow the markups; editing keeps the stored prices unless
-	// the user opts in (so saving a typo fix doesn't snap prices silently).
+	// Prices track the category markups until the user types one by hand,
+	// which marks the product as manually priced: markup changes then leave it
+	// alone. Editing a product that follows the markups shows its recalculated
+	// prices up front, so saving never snaps them silently.
 	// svelte-ignore state_referenced_locally
-	let autoCalc = $state(product === undefined);
-	let markupsByCategory = $state<Record<string, MarkupPcts>>({});
+	let autoCalc = $state(!product?.manualPrices);
+	let categories = $state<CategoryWithMarkup[]>([]);
+	let roundingStep = $state(1000);
 
 	$effect(() => {
-		getMarkups().then((rows) => {
-			markupsByCategory = Object.fromEntries(rows.map((r) => [r.category, r]));
+		Promise.all([getCategories(), getPriceRoundingStep()]).then(([rows, step]) => {
+			categories = rows;
+			roundingStep = step;
+			if (autoCalc) recalcFromCost();
 		});
 	});
 
-	function categoryMarkups(): MarkupPcts | undefined {
-		return markupsByCategory[selectedCategory ?? 'OTHER'];
+	function categoryMarkups(): CategoryWithMarkup | undefined {
+		return categories.find((c) => c.id === (selectedCategory ?? 'OTHER'));
 	}
 
 	function recalcFromCost() {
 		const markup = categoryMarkups();
 		const cost = Number(costPrice);
 		if (!markup || costPrice === '' || !Number.isFinite(cost)) return;
-		enduserPrice = String(priceFromMarkup(cost, markup.enduserPct));
-		discountPrice = String(priceFromMarkup(cost, markup.discountPct));
-		resalePrice = String(priceFromMarkup(cost, markup.resalePct));
-		specialPrice = String(priceFromMarkup(cost, markup.specialPct));
+		enduserPrice = String(priceFromMarkup(cost, markup.enduserPct, roundingStep));
+		discountPrice = String(priceFromMarkup(cost, markup.discountPct, roundingStep));
+		resalePrice = String(priceFromMarkup(cost, markup.resalePct, roundingStep));
+		specialPrice = String(priceFromMarkup(cost, markup.specialPct, roundingStep));
 	}
 
 	function onCostInput() {
@@ -106,9 +115,7 @@
 		}
 	] as const;
 
-	let categoryLabel = $derived(
-		PRODUCT_CATEGORIES.find((c) => c.value === selectedCategory)?.label ?? 'Select a category'
-	);
+	let categoryLabel = $derived(categoryMarkups()?.name ?? 'Select a category');
 
 	async function handleSubmit(e: Event & { currentTarget: HTMLFormElement }) {
 		e.preventDefault();
@@ -120,7 +127,8 @@
 			specification: specification.trim(),
 			warranty: warranty.trim() || 'N/A',
 			unit: unit.trim() || undefined,
-			costPrice: Number(costPrice || 0)
+			costPrice: Number(costPrice || 0),
+			manualPrices: !autoCalc
 		};
 
 		const prices = {
@@ -172,19 +180,14 @@
 	<div class="grid grid-cols-2 gap-4">
 		<div class="space-y-2">
 			<Label>Category</Label>
-			<Select.Root
-				type="single"
-				bind:value={() => selectedCategory, (v) => (selectedCategory = v as ProductCategory)}
-			>
-				<Select.Trigger class="w-full">
-					{categoryLabel}
-				</Select.Trigger>
-				<Select.Content>
-					{#each PRODUCT_CATEGORIES as cat (cat.value)}
-						<Select.Item value={cat.value}>{cat.label}</Select.Item>
-					{/each}
-				</Select.Content>
-			</Select.Root>
+			<CategorySelect
+				{categories}
+				value={selectedCategory ?? ''}
+				onValueChange={(v) => {
+					selectedCategory = v;
+					if (autoCalc) recalcFromCost();
+				}}
+			/>
 		</div>
 		<div class="space-y-2">
 			<Label for="cp-unit">Unit</Label>

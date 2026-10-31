@@ -1,5 +1,5 @@
 // import type { PriceLabel, Product } from '../api/types';
-import type { PriceLabel, ProductCategory } from '#lib/db/schema.js';
+import type { PriceLabel } from '#lib/db/schema.js';
 import type { Product } from '#lib/api/types.js';
 
 const FIELD_BY_LABEL: Record<PriceLabel, keyof Product> = {
@@ -22,29 +22,4 @@ export const PRICE_LABEL_OPTIONS: { value: PriceLabel; text: string }[] = [
 	{ value: 'RESALE_PRICE', text: 'Resale price' },
 	{ value: 'SPECIAL_PRICE', text: 'Special price' },
 	{ value: 'ENDUSER_PRICE', text: 'End-user price' }
-];
-
-export const PRODUCT_CATEGORY_OPTIONS = [
-	'SOLAR_PANEL',
-	'INVERTER',
-	'CHARGE_CONTROLLER',
-	'BATTERY',
-	'RACK_MOUNTING',
-	'CABLE',
-	'CABINET',
-	'ACCESSORY',
-	'OTHER'
-] as const;
-
-/** One canonical label list, shared by the products page, forms and dialogs. */
-export const PRODUCT_CATEGORIES: { value: ProductCategory; label: string }[] = [
-	{ value: 'SOLAR_PANEL', label: 'Solar Panel' },
-	{ value: 'INVERTER', label: 'Inverter' },
-	{ value: 'CHARGE_CONTROLLER', label: 'Charge Controller' },
-	{ value: 'BATTERY', label: 'Battery' },
-	{ value: 'RACK_MOUNTING', label: 'Rack / Mounting' },
-	{ value: 'CABLE', label: 'Cable' },
-	{ value: 'CABINET', label: 'Cabinet' },
-	{ value: 'ACCESSORY', label: 'Accessory' },
-	{ value: 'OTHER', label: 'Other' }
 ];

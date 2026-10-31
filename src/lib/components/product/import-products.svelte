@@ -1,20 +1,25 @@
 <script lang="ts">
-	import { importProducts } from '#lib/api/products.js';
+	import {
+		getCategories,
+		importProducts,
+		type CategoryWithMarkup,
+		type ImportProductsPayload,
+		type ImportResult
+	} from '#lib/api/products.js';
 	import { parseWorkbook, type ParsedSheet } from '#lib/utils/product-import.js';
-	import { bpToPercent, MARKUP_FIELDS } from '#lib/utils/markups.js';
-	import { PRODUCT_CATEGORIES } from '#lib/utils/pricing.js';
+	import { bpToPercent, MARKUP_FIELDS, type MarkupPcts } from '#lib/utils/markups.js';
 	import type { ProductCategory } from '#lib/db/schema.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import FileSpreadsheetIcon from '@tabler/icons-svelte/icons/file-spreadsheet';
 	import FileDropZone from '#lib/components/file-drop-zone.svelte';
+	import CategorySelect from '#lib/components/product/category-select.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
-	import * as Select from '#lib/components/ui/select/index.js';
 	import { toast } from 'svelte-sonner';
 
 	type Props = {
 		/** Called after a successful import so the page can refresh its data. */
-		onImported: (result: { inserted: number; skipped: number }) => void;
+		onImported: (result: ImportResult) => void;
 		/** Label for the import button, e.g. during onboarding. */
 		importLabel?: (count: number) => string;
 	};
@@ -29,8 +34,16 @@
 	let isImporting = $state(false);
 	let sheets = $state<ParsedSheet[]>([]);
 	let choices = $state<Record<string, { include: boolean; category: ProductCategory }>>({});
+	let categories = $state<CategoryWithMarkup[]>([]);
 	let skipZeroCost = $state(true);
-	let skipExisting = $state(true);
+	let updateExisting = $state(true);
+	let updateCategories = $state(false);
+	let useSheetMarkups = $state(true);
+	let preview = $state<ImportResult | null>(null);
+
+	$effect(() => {
+		getCategories().then((rows) => (categories = rows));
+	});
 
 	async function onFile(file: File) {
 		isParsing = true;
@@ -49,34 +62,107 @@
 		}
 	}
 
+	function categoryName(id: string) {
+		return categories.find((c) => c.id === id)?.name ?? id;
+	}
+
+	/** The top-level category whose markups a category uses. */
+	function markupOwner(id: string) {
+		const cat = categories.find((c) => c.id === id);
+		return cat?.parentId && cat.inherited ? cat.parentId : id;
+	}
+
 	/** Products queued for import, honouring per-sheet include/category and the cost filter. */
 	let selectedProducts = $derived.by(() => {
-		const out: { sheetName: string; product: (typeof sheets)[number]['products'][number] }[] = [];
+		const out: { sheetName: string; product: ImportProductsPayload['products'][number] }[] = [];
 		for (const sheet of sheets) {
 			const choice = choices[sheet.sheetName];
 			if (!choice?.include) continue;
-			for (const product of sheet.products) {
+			for (const { detectedCategory, ...product } of sheet.products) {
 				if (skipZeroCost && product.costPrice <= 0) continue;
-				out.push({ sheetName: sheet.sheetName, product });
+				out.push({
+					sheetName: sheet.sheetName,
+					product: { ...product, category: detectedCategory ?? choice.category }
+				});
 			}
 		}
 		return out;
+	});
+
+	/** How many of a sheet's rows land in each category. */
+	function breakdown(sheetName: string) {
+		const counts: Record<string, number> = {};
+		for (const { sheetName: s, product } of selectedProducts) {
+			if (s === sheetName) counts[product.category] = (counts[product.category] ?? 0) + 1;
+		}
+		return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+	}
+
+	/**
+	 * Each sheet's markup row goes to every category its rows use. When two
+	 * sheets disagree about one category, the first sheet wins and we say so.
+	 */
+	let markupPlan = $derived.by(() => {
+		const plan = new Map<string, { sheetName: string; markup: MarkupPcts }>();
+		const conflicts: string[] = [];
+		if (!useSheetMarkups) return { plan, conflicts };
+		for (const sheet of sheets) {
+			if (!choices[sheet.sheetName]?.include || !sheet.markup) continue;
+			const owners = new Set(
+				selectedProducts
+					.filter((p) => p.sheetName === sheet.sheetName)
+					.map((p) => markupOwner(p.product.category))
+			);
+			for (const owner of owners) {
+				const prior = plan.get(owner);
+				if (!prior) plan.set(owner, { sheetName: sheet.sheetName, markup: sheet.markup });
+				else if (MARKUP_FIELDS.some((f) => prior.markup[f.key] !== sheet.markup![f.key])) {
+					conflicts.push(
+						`${categoryName(owner)}: "${sheet.sheetName}" and "${prior.sheetName}" have different markups, using "${prior.sheetName}".`
+					);
+				}
+			}
+		}
+		return { plan, conflicts };
+	});
+
+	function payload(dryRun: boolean): ImportProductsPayload {
+		return {
+			products: selectedProducts.map((p) => p.product),
+			markups: [...markupPlan.plan].map(([category, { markup }]) => ({ category, ...markup })),
+			skipExisting: !updateExisting,
+			updateCategories,
+			dryRun
+		};
+	}
+
+	// Re-plan (without writing) whenever the selection or options change.
+	let previewTimer: ReturnType<typeof setTimeout>;
+	$effect(() => {
+		const next = payload(true);
+		clearTimeout(previewTimer);
+		if (next.products.length === 0) {
+			preview = null;
+			return;
+		}
+		previewTimer = setTimeout(async () => {
+			try {
+				preview = await importProducts(next);
+			} catch {
+				preview = null;
+			}
+		}, 250);
+		return () => clearTimeout(previewTimer);
 	});
 
 	async function runImport() {
 		if (selectedProducts.length === 0) return;
 		isImporting = true;
 		try {
-			const res = await importProducts({
-				products: selectedProducts.map(({ product, sheetName }) => {
-					const category = choices[sheetName].category;
-					return { ...product, category };
-				}),
-				skipExisting
-			});
+			const res = await importProducts(payload(false));
 			toast.success(
-				`Imported ${res.inserted} product(s)` +
-					(res.skipped > 0 ? `, skipped ${res.skipped} already in your catalog` : '')
+				`Imported ${res.inserted} new product(s), updated ${res.updated}` +
+					(res.skipped > 0 ? `, skipped ${res.skipped}` : '')
 			);
 			sheets = [];
 			choices = {};
@@ -87,6 +173,10 @@
 		} finally {
 			isImporting = false;
 		}
+	}
+
+	function fmtMarkup(markup: MarkupPcts) {
+		return MARKUP_FIELDS.map((f) => `${f.label} ${bpToPercent(markup[f.key])}%`).join(' · ');
 	}
 </script>
 
@@ -114,7 +204,8 @@
 			{/snippet}
 		</FileDropZone>
 		<p class="text-xs text-muted-foreground">
-			Each sheet becomes a batch of products. Adjust the category per sheet before importing.
+			Rows are sorted into categories by their Type column where it has one. The sheet's category is
+			used for everything else.
 		</p>
 	</div>
 
@@ -138,31 +229,25 @@
 					{#if sheet.products.length > 0}
 						<div class="mt-2 flex flex-wrap items-center gap-3">
 							<div class="min-w-44 flex-1">
-								<Select.Root
-									type="single"
+								<CategorySelect
+									{categories}
 									value={choices[sheet.sheetName].category}
-									onValueChange={(v) => (choices[sheet.sheetName].category = v as ProductCategory)}
-								>
-									<Select.Trigger class="w-full">
-										{PRODUCT_CATEGORIES.find((c) => c.value === choices[sheet.sheetName].category)
-											?.label ?? choices[sheet.sheetName].category}
-									</Select.Trigger>
-									<Select.Content>
-										{#each PRODUCT_CATEGORIES as cat (cat.value)}
-											<Select.Item value={cat.value}>{cat.label}</Select.Item>
-										{/each}
-									</Select.Content>
-								</Select.Root>
+									onValueChange={(v) => (choices[sheet.sheetName].category = v)}
+								/>
 							</div>
 							{#if sheet.markup}
 								<span class="text-xs text-muted-foreground">
-									sheet markups:
-									{MARKUP_FIELDS.map(
-										(f) => `${f.label} ${bpToPercent(sheet.markup?.[f.key] ?? 0)}%`
-									).join(' · ')}
+									sheet markups: {fmtMarkup(sheet.markup)}
 								</span>
 							{/if}
 						</div>
+						{#if choices[sheet.sheetName].include}
+							<p class="mt-2 text-xs text-muted-foreground">
+								{breakdown(sheet.sheetName)
+									.map(([id, n]) => `${n} ${categoryName(id)}`)
+									.join(' · ')}
+							</p>
+						{/if}
 					{:else}
 						<p class="mt-1 text-xs text-muted-foreground">No importable rows in this sheet.</p>
 					{/if}
@@ -176,12 +261,57 @@
 				<span class="text-muted-foreground">Skip rows without a cost price</span>
 			</label>
 			<label class="flex items-center gap-2 text-sm">
-				<Checkbox checked={skipExisting} onCheckedChange={(c) => (skipExisting = c === true)} />
+				<Checkbox checked={updateExisting} onCheckedChange={(c) => (updateExisting = c === true)} />
 				<span class="text-muted-foreground"
-					>Skip products already in the catalog (same brand &amp; specification)</span
+					>Update products already in the catalog (cost, supplier, price date)</span
 				>
 			</label>
+			{#if updateExisting}
+				<label class="ml-6 flex items-center gap-2 text-sm">
+					<Checkbox
+						checked={updateCategories}
+						onCheckedChange={(c) => (updateCategories = c === true)}
+					/>
+					<span class="text-muted-foreground">Also move them to the category detected here</span>
+				</label>
+			{/if}
+			<label class="flex items-center gap-2 text-sm">
+				<Checkbox
+					checked={useSheetMarkups}
+					onCheckedChange={(c) => (useSheetMarkups = c === true)}
+				/>
+				<span class="text-muted-foreground"
+					>Save the workbook's markup rows to their categories</span
+				>
+			</label>
+			{#if useSheetMarkups && markupPlan.plan.size > 0}
+				<ul class="ml-6 space-y-0.5 text-xs text-muted-foreground">
+					{#each [...markupPlan.plan] as [category, { markup }] (category)}
+						<li>{categoryName(category)}: {fmtMarkup(markup)}</li>
+					{/each}
+				</ul>
+			{/if}
+			{#each markupPlan.conflicts as conflict (conflict)}
+				<p class="ml-6 text-xs text-amber-600 dark:text-amber-400">{conflict}</p>
+			{/each}
 		</div>
+
+		{#if preview}
+			<div class="space-y-1 rounded-lg bg-muted/50 p-3 text-sm">
+				<p>
+					{preview.inserted} new · {preview.updated} updated ({preview.pricesChanged} with price changes){preview.skipped >
+					0
+						? ` · ${preview.skipped} skipped`
+						: ''}
+				</p>
+				{#if preview.brandMerges.length > 0}
+					<p class="text-xs text-muted-foreground">
+						Brand spellings matched to existing ones:
+						{preview.brandMerges.map((m) => `${m.from} → ${m.to}`).join(', ')}
+					</p>
+				{/if}
+			</div>
+		{/if}
 
 		<Button
 			class="w-full"

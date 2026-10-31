@@ -6,6 +6,8 @@ type Row<T extends { $inferSelect: unknown }> = T['$inferSelect'];
 type WithoutTimestamps<T> = Omit<T, 'createdAt' | 'updatedAt'>;
 
 export type Product = Row<typeof table.product>;
+/** A product as the catalog lists it, with its category's display name. */
+export type CatalogProduct = Product & { categoryName: string | null };
 export type Customer = Row<typeof table.customer>;
 export type Invoice = Row<typeof table.invoice>;
 export type InvoiceItem = Row<typeof table.invoiceItem>;

@@ -15,6 +15,7 @@ const quotes = await import('./quotes.js');
 const invoices = await import('./invoices.js');
 const dashboard = await import('./dashboard.js');
 const { parseWorkbook } = await import('#lib/utils/product-import.js');
+const { priceFromMarkup } = await import('#lib/utils/markups.js');
 const { quoteTotals } = await import('#lib/utils/quote-totals.js');
 
 beforeAll(async () => {
@@ -57,7 +58,7 @@ describe('onboarding', () => {
 });
 
 describe('product catalog', () => {
-	it('parses a price-list workbook and imports it, skipping duplicates', async () => {
+	it('parses a price-list workbook, imports it, then updates on re-import', async () => {
 		const sheet = XLSX.utils.aoa_to_sheet([
 			[0.3, 0.25, 0.2, 0.15],
 			[
@@ -91,12 +92,19 @@ describe('product catalog', () => {
 
 		expect(await products.importProducts({ products: parsed[0].products })).toEqual({
 			inserted: 2,
-			skipped: 0
+			updated: 0,
+			pricesChanged: 0,
+			skipped: 0,
+			brandMerges: []
 		});
-		expect(await products.importProducts({ products: parsed[0].products })).toEqual({
+		expect(await products.importProducts({ products: parsed[0].products })).toMatchObject({
 			inserted: 0,
-			skipped: 2
+			updated: 2,
+			pricesChanged: 0
 		});
+		expect(
+			await products.importProducts({ products: parsed[0].products, skipExisting: true })
+		).toMatchObject({ inserted: 0, updated: 0, skipped: 2 });
 		expect(await products.countProducts()).toBe(2);
 	});
 
@@ -115,8 +123,8 @@ describe('product catalog', () => {
 		expect(updatedProducts).toBe(2);
 		const [repriced] = await products.getProducts({ search: 'growatt' });
 		expect(repriced.enduserPrice).toBe(700_000);
-		const markups = await products.getMarkups();
-		expect(markups.find((m) => m.category === 'INVERTER')).toMatchObject({
+		const categories = await products.getCategories();
+		expect(categories.find((c) => c.id === 'INVERTER')).toMatchObject({
 			enduserPct: 4000,
 			productCount: 2
 		});
@@ -264,5 +272,285 @@ describe('quotes and invoices', () => {
 		const recent = await dashboard.getRecentQuotes('SENT');
 		expect(recent.counts.SENT).toBe(1);
 		expect(recent.rows[0]).toMatchObject({ customerName: 'Ada Obi', totalMin: 50_000 });
+	});
+});
+
+function workbook(sheets: Record<string, unknown[][]>) {
+	const book = XLSX.utils.book_new();
+	for (const [name, rows] of Object.entries(sheets)) {
+		XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet(rows), name);
+	}
+	const bytes = XLSX.write(book, { type: 'array', bookType: 'xlsx' });
+	return new File([bytes], 'prices.xlsx');
+}
+
+function rowsFor(sheets: Awaited<ReturnType<typeof parseWorkbook>>) {
+	return sheets.flatMap((sheet) =>
+		sheet.products.map(({ detectedCategory, ...p }) => ({
+			...p,
+			category: detectedCategory ?? sheet.category
+		}))
+	);
+}
+
+describe('price rounding', () => {
+	it('rounds half-up to the step like MROUND', () => {
+		// Values from the workbook: cost → MROUND(cost * (1 + margin), 1000).
+		expect(priceFromMarkup(390_000, 2500, 1000)).toBe(488_000);
+		expect(priceFromMarkup(185_000, 2500, 1000)).toBe(231_000);
+		expect(priceFromMarkup(470_000, 1500, 1000)).toBe(541_000);
+		expect(priceFromMarkup(390_000, 2500, 1)).toBe(487_500);
+	});
+});
+
+describe('categories and re-import', () => {
+	const HEADER = [
+		'Brand',
+		'Type',
+		'Specification',
+		'Capacity',
+		'End User Price',
+		'Discount Price',
+		'Resale Price',
+		'Special Price',
+		'Cost Price',
+		'Supplier',
+		'Last Updated'
+	];
+	const MARKUP_ROW = ['', '', '', '', 0.3, 0.25, 0.2, 0.15];
+	// 2025-05-17 as an Excel date serial.
+	const MAY_2025 = 45_794;
+
+	it('sorts rows by their Type column and keeps hand-typed prices', async () => {
+		const parsed = await parseWorkbook(
+			workbook({
+				Inverter: [
+					MARKUP_ROW,
+					HEADER,
+					[
+						'Deye',
+						'Inverter Hybrid',
+						'5KW 48V Hybrid',
+						5,
+						507_000,
+						488_000,
+						468_000,
+						449_000,
+						390_000,
+						'Ade',
+						MAY_2025
+					],
+					['Upsen', 'UPS', '3KVA Online UPS', 3, 0, 0, 0, 0, 200_000, 0, MAY_2025],
+					['Vectronic', 'AVR 3 Phase', '30KVA AVR', 30, 0, 0, 0, 0, 100_000, 0, MAY_2025],
+					['Sorotec', 'Invertert String', '10KW String', 10, 0, 0, 0, 0, 100_000, 0, MAY_2025],
+					// Prices that don't follow the sheet's markup row were typed in by hand.
+					[
+						'Smk/Proton',
+						'Hybrid Inverter ',
+						'3KW 24V',
+						3,
+						999_000,
+						900_000,
+						800_000,
+						700_000,
+						300_000,
+						0,
+						MAY_2025
+					]
+				],
+				'Stacking Kit': [
+					MARKUP_ROW,
+					[
+						'Brand',
+						'Specification',
+						'End User Price',
+						'Discount Price',
+						'Resale Price',
+						'Special Price',
+						'Cost Price'
+					],
+					['Victron', 'Cerbo GX', 0, 0, 0, 0, 150_000],
+					['Warranty', 'Warranty Extension from 2 to 5 Years', 0, 0, 0, 0, 50_000],
+					['Victron', 'RJ45 Cable', 0, 0, 0, 0, 5_000]
+				]
+			})
+		);
+		const rows = rowsFor(parsed);
+		expect(rows.map((r) => [r.brand, r.category])).toEqual([
+			['Deye', 'HYBRID_INVERTER'],
+			['Upsen', 'UPS'],
+			['Vectronic', 'AVR_ATS'],
+			['Sorotec', 'STRING_INVERTER'],
+			['Smk/Proton', 'HYBRID_INVERTER'],
+			['Victron', 'MONITORING'],
+			['Warranty', 'SERVICE'],
+			['Victron', 'ACCESSORY']
+		]);
+		expect(rows[0]).toMatchObject({ supplier: 'Ade', manualPrices: null });
+		expect(rows[0].priceUpdatedAt?.toISOString().slice(0, 10)).toBe('2025-05-17');
+		expect(rows[1].supplier).toBeNull();
+		expect(rows[4].manualPrices).toMatchObject({ enduserPrice: 999_000 });
+
+		// As the import dialog does: the Inverter sheet's markup row goes to its category.
+		await products.importProducts({
+			products: rows,
+			markups: [{ category: 'INVERTER', ...parsed[0].markup! }]
+		});
+		const [deye] = await products.getProducts({ search: '5KW 48V Hybrid' });
+		expect(deye).toMatchObject({
+			categoryName: 'Hybrid Inverter',
+			enduserPrice: 507_000,
+			discountPrice: 488_000,
+			manualPrices: false
+		});
+		const [smk] = await products.getProducts({ search: '3KW 24V' });
+		expect(smk).toMatchObject({ enduserPrice: 999_000, manualPrices: true });
+
+		// A parent category filter includes its subcategories.
+		const inverters = await products.getProducts({ category: 'INVERTER' });
+		expect(inverters.map((p) => p.brand)).toEqual(
+			expect.arrayContaining(['Deye', 'Sorotec', 'Smk/Proton'])
+		);
+		expect(inverters.map((p) => p.brand)).not.toContain('Upsen');
+	});
+
+	it('updates costs on re-import and folds brand spellings together', async () => {
+		const plan = await products.importProducts({
+			dryRun: true,
+			products: [
+				{
+					brand: 'DEYE',
+					category: 'HYBRID_INVERTER',
+					specification: '5KW 48V Hybrid',
+					warranty: 'N/A',
+					costPrice: 400_000,
+					supplier: 'Ade',
+					priceUpdatedAt: new Date('2026-01-02'),
+					technicalSpecs: { capacity: 5 },
+					manualPrices: null
+				}
+			]
+		});
+		expect(plan).toEqual({
+			inserted: 0,
+			updated: 1,
+			pricesChanged: 1,
+			skipped: 0,
+			brandMerges: [{ from: 'DEYE', to: 'Deye' }]
+		});
+		// Dry runs write nothing.
+		expect((await products.getProducts({ search: '5KW 48V Hybrid' }))[0].costPrice).toBe(390_000);
+
+		await products.importProducts({
+			products: [
+				{
+					brand: 'DEYE',
+					category: 'HYBRID_INVERTER',
+					specification: '5KW 48V Hybrid',
+					warranty: 'N/A',
+					costPrice: 400_000,
+					supplier: 'Ade',
+					priceUpdatedAt: new Date('2026-01-02'),
+					technicalSpecs: { capacity: 5 },
+					manualPrices: null
+				}
+			]
+		});
+		const [deye] = await products.getProducts({ search: '5KW 48V Hybrid' });
+		expect(deye).toMatchObject({ brand: 'Deye', costPrice: 400_000, enduserPrice: 520_000 });
+		expect(deye.priceUpdatedAt?.toISOString().slice(0, 10)).toBe('2026-01-02');
+	});
+
+	it('reprices subcategories that inherit, and leaves manual prices alone', async () => {
+		const { updatedProducts } = await products.updateMarkup({
+			category: 'INVERTER',
+			enduserPct: 5000,
+			discountPct: 4000,
+			resalePct: 3000,
+			specialPct: 2000
+		});
+		expect(updatedProducts).toBeGreaterThan(0);
+		const [deye] = await products.getProducts({ search: '5KW 48V Hybrid' });
+		expect(deye.enduserPrice).toBe(600_000);
+		const [smk] = await products.getProducts({ search: '3KW 24V' });
+		expect(smk.enduserPrice).toBe(999_000);
+
+		// A subcategory's own markups, then back to inheriting.
+		await products.updateMarkup({
+			category: 'HYBRID_INVERTER',
+			enduserPct: 1000,
+			discountPct: 1000,
+			resalePct: 1000,
+			specialPct: 1000
+		});
+		expect((await products.getProducts({ search: '5KW 48V Hybrid' }))[0].enduserPrice).toBe(
+			440_000
+		);
+		const hybrid = (await products.getCategories()).find((c) => c.id === 'HYBRID_INVERTER');
+		expect(hybrid).toMatchObject({ inherited: false, enduserPct: 1000 });
+
+		await products.updateMarkup({
+			category: 'HYBRID_INVERTER',
+			inherit: true,
+			enduserPct: 0,
+			discountPct: 0,
+			resalePct: 0,
+			specialPct: 0
+		});
+		expect((await products.getProducts({ search: '5KW 48V Hybrid' }))[0].enduserPrice).toBe(
+			600_000
+		);
+
+		// The rounding step reprices too: 400,000 * 1.5 is already a round number, 10% isn't.
+		await products.updateMarkup({
+			category: 'UPS',
+			enduserPct: 1234,
+			discountPct: 1000,
+			resalePct: 1000,
+			specialPct: 1000
+		});
+		expect((await products.getProducts({ search: 'Online UPS' }))[0].enduserPrice).toBe(225_000);
+		await products.updatePriceRoundingStep(1);
+		expect((await products.getProducts({ search: 'Online UPS' }))[0].enduserPrice).toBe(224_680);
+		await products.updatePriceRoundingStep(1000);
+	});
+
+	it('deletes several products at once', async () => {
+		const before = await products.countProducts();
+		const victron = await products.getProducts({ brand: 'Victron' });
+		expect(victron).toHaveLength(2);
+		await products.deleteProducts(victron.map((p) => p.id));
+		await products.deleteProducts([]);
+		expect(await products.getProducts({ brand: 'Victron' })).toHaveLength(0);
+		expect(await products.countProducts()).toBe(before - 2);
+	});
+
+	it('adds and deletes categories', async () => {
+		const { id } = await products.createCategory({ name: 'Generator' });
+		expect(id).toBe('GENERATOR');
+		const { id: childId } = await products.createCategory({ name: 'Diesel', parentId: id });
+		const categories = await products.getCategories();
+		expect(categories.find((c) => c.id === childId)).toMatchObject({
+			parentId: 'GENERATOR',
+			inherited: true,
+			enduserPct: 3000
+		});
+		await expect(products.createCategory({ name: 'generator' })).rejects.toThrow(/already exists/);
+		await expect(products.deleteCategory(id)).rejects.toThrow(/subcategories/);
+		await products.deleteCategory(childId);
+		await products.deleteCategory(id);
+		await expect(products.deleteCategory('UPS')).rejects.toThrow(/Move its products/);
+		await expect(
+			products.createProduct({
+				brand: 'X',
+				category: 'NOPE',
+				specification: 'Y',
+				costPrice: 1,
+				enduserPrice: 1,
+				discountPrice: 1,
+				resalePrice: 1,
+				specialPrice: 1
+			})
+		).rejects.toThrow(/category that exists/);
 	});
 });

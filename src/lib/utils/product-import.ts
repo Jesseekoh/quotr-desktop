@@ -1,22 +1,20 @@
 import * as XLSX from 'xlsx';
+import type { ImportRow } from '#lib/api/products.js';
 import type { ProductCategory } from '#lib/db/schema.js';
 import type { MarkupPcts } from '#lib/utils/markups.js';
+import { productKey } from '#lib/utils/product-key.js';
 
-export interface ImportableProduct {
-	brand: string;
-	category: ProductCategory;
-	specification: string;
-	warranty: string;
-	costPrice: number;
-	enduserPrice: number;
-	discountPrice: number;
-	resalePrice: number;
-	specialPrice: number;
-	technicalSpecs: Record<string, unknown> | null;
+export interface ImportableProduct extends ImportRow {
+	/**
+	 * Category read from the row itself (its Type column or specification),
+	 * or null to use the sheet's category.
+	 */
+	detectedCategory: ProductCategory | null;
 }
 
 export interface ParsedSheet {
 	sheetName: string;
+	/** Category for rows the parser could not classify on their own. */
 	category: ProductCategory;
 	/** Markup row detected above the sheet's header, in basis points. */
 	markup: MarkupPcts | null;
@@ -29,8 +27,8 @@ export interface ParsedSheet {
 export const SHEET_CATEGORY_MAP: Record<string, ProductCategory> = {
 	Inverter: 'INVERTER',
 	'Stacking Kit': 'ACCESSORY',
-	Ups: 'OTHER',
-	'AVR and ATS': 'OTHER',
+	Ups: 'UPS',
+	'AVR and ATS': 'AVR_ATS',
 	Battery: 'BATTERY',
 	MPPT: 'CHARGE_CONTROLLER',
 	Panels: 'SOLAR_PANEL',
@@ -38,6 +36,62 @@ export const SHEET_CATEGORY_MAP: Record<string, ProductCategory> = {
 	'Rack cabinets': 'CABINET',
 	'Cables, bus bars': 'CABLE'
 };
+
+/**
+ * Type-column values → category. The workbook spells types several ways
+ * ("Hybrid Inverter", "Inverter Hybrid", "Invertert String"), so a type is
+ * matched on its set of words, in any order. `onlyIn` limits a rule to one
+ * sheet category: on "Rack cabinets", Type is the battery a cabinet holds.
+ */
+const TYPE_RULES: { words: string[]; category: ProductCategory; onlyIn?: ProductCategory }[] = [
+	{ words: ['ups'], category: 'UPS' },
+	{ words: ['avr'], category: 'AVR_ATS' },
+	{ words: ['ats'], category: 'AVR_ATS' },
+	{ words: ['water', 'pump'], category: 'WATER_PUMP' },
+	{ words: ['hybrid'], category: 'HYBRID_INVERTER' },
+	{ words: ['standalone'], category: 'STANDALONE_INVERTER' },
+	{ words: ['string'], category: 'STRING_INVERTER' },
+	{ words: ['allinone', 'inverter'], category: 'ALL_IN_ONE_INVERTER' },
+	{ words: ['allinone', 'invertert'], category: 'ALL_IN_ONE_INVERTER' },
+	{ words: ['lithium'], category: 'LITHIUM_BATTERY', onlyIn: 'BATTERY' },
+	{ words: ['lead', 'acid'], category: 'LEAD_ACID_BATTERY', onlyIn: 'BATTERY' },
+	{ words: ['flooded'], category: 'FLOODED_BATTERY', onlyIn: 'BATTERY' },
+	{ words: ['mppt'], category: 'CHARGE_CONTROLLER' },
+	{ words: ['accessories'], category: 'ACCESSORY' }
+];
+
+/** Fallback for sheets without a Type column (e.g. "Stacking Kit"). */
+const SPEC_RULES: { pattern: RegExp; category: ProductCategory }[] = [
+	{ pattern: /warranty extension/i, category: 'SERVICE' },
+	{ pattern: /monitoring|wifi dongle|gateway|cerbo|ccgx/i, category: 'MONITORING' },
+	{ pattern: /transfer switch|\bats\b|\bavr\b/i, category: 'AVR_ATS' }
+];
+
+function typeWords(type: string): Set<string> {
+	return new Set(
+		type
+			.toLowerCase()
+			.replace(/all[\s-]*in[\s-]*one/g, 'allinone')
+			.split(/[^a-z0-9]+/)
+			.filter(Boolean)
+	);
+}
+
+function detectCategory(
+	type: Cell,
+	spec: string,
+	sheetCategory: ProductCategory
+): ProductCategory | null {
+	if (!isBlankText(type)) {
+		const words = typeWords(String(type));
+		return (
+			TYPE_RULES.find(
+				(r) => (!r.onlyIn || r.onlyIn === sheetCategory) && r.words.every((w) => words.has(w))
+			)?.category ?? null
+		);
+	}
+	return SPEC_RULES.find((r) => r.pattern.test(spec))?.category ?? null;
+}
 
 /** Sheets that hold validation lists / notes rather than products. */
 const IGNORED_SHEETS = new Set(['Notes']);
@@ -113,11 +167,35 @@ function markupBpFromCell(value: Cell): number | null {
 	return null;
 }
 
-function excelSerialToIso(serial: number): string {
-	const ms = Math.round((serial - 25_569) * 86_400_000);
-	const d = new Date(ms);
-	if (Number.isNaN(d.getTime())) return String(serial);
-	return d.toISOString().slice(0, 10);
+function excelSerialToDate(serial: number): Date | null {
+	const d = new Date(Math.round((serial - 25_569) * 86_400_000));
+	return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Whether a row's sell prices come from the sheet's markup row (within the
+ * workbook's ₦1,000 rounding) rather than being typed in by hand. Rows with no
+ * sell prices, or no cost to derive them from, count as following it.
+ */
+function followsMarkup(
+	cost: number,
+	prices: Record<'enduserPrice' | 'discountPrice' | 'resalePrice' | 'specialPrice', number>,
+	markup: MarkupPcts | null
+): boolean {
+	const values = Object.values(prices);
+	if (values.every((v) => v === 0) || cost <= 0) return true;
+	if (!markup) return false;
+	const tiers = [
+		[prices.enduserPrice, markup.enduserPct],
+		[prices.discountPrice, markup.discountPct],
+		[prices.resalePrice, markup.resalePct],
+		[prices.specialPrice, markup.specialPct]
+	] as const;
+	// A blank tier (0) is a column the sheet doesn't have, not a hand-set price.
+	// Compared in units of 1/10,000 naira so 390,000 at 15% is exactly 448,500.
+	return tiers.every(
+		([p, bp]) => p === 0 || Math.abs(p * 10_000 - cost * (10_000 + bp)) <= 500 * 10_000
+	);
 }
 
 function findHeaderRow(rows: Cell[][]): number {
@@ -187,9 +265,8 @@ function parseSheet(name: string, ws: XLSX.WorkSheet, category: ProductCategory)
 			[brandCell, typeCell].map((c) => String(c ?? '').trim()).find((s) => !isBlankText(s)) ??
 			'Unbranded';
 
-		// Panels repeat brand+spec across wattages, so capacity is part of the identity.
 		const capacity = asNumber(get(row, 'capacity'));
-		const key = `${norm(brand)}\u0000${norm(spec)}\u0000${capacity ?? ''}`;
+		const key = productKey(brand, spec, capacity ?? undefined);
 		if (seen.has(key)) continue;
 		seen.add(key);
 
@@ -204,15 +281,13 @@ function parseSheet(name: string, ws: XLSX.WorkSheet, category: ProductCategory)
 			'mppV',
 			'mppA',
 			'mppT',
-			'size',
-			'supplier'
+			'size'
 		] as const) {
 			const value = get(row, field);
 			if (!isBlankText(value)) specs[field] = value;
 		}
 		const lastUpdated = asNumber(get(row, 'lastUpdated'));
-		if (lastUpdated !== null && lastUpdated > 1000)
-			specs.lastUpdated = excelSerialToIso(lastUpdated);
+		const supplier = get(row, 'supplier');
 
 		// A numeric warranty cell is a number of years; 0 means no warranty stated.
 		const warrantyRaw = get(row, 'warranty');
@@ -224,17 +299,26 @@ function parseSheet(name: string, ws: XLSX.WorkSheet, category: ProductCategory)
 					: 'N/A'
 				: String(warrantyRaw ?? '').trim();
 
-		products.push({
-			brand,
-			category,
-			specification: spec,
-			warranty: warranty || 'N/A',
-			costPrice: price('costPrice'),
+		const costPrice = price('costPrice');
+		const sheetPrices = {
 			enduserPrice: price('enduserPrice'),
 			discountPrice: price('discountPrice'),
 			resalePrice: price('resalePrice'),
-			specialPrice: price('specialPrice'),
-			technicalSpecs: Object.keys(specs).length ? specs : null
+			specialPrice: price('specialPrice')
+		};
+
+		products.push({
+			brand,
+			category,
+			detectedCategory: detectCategory(typeCell, spec, category),
+			specification: spec,
+			warranty: warranty || 'N/A',
+			costPrice,
+			supplier: isBlankText(supplier) ? null : String(supplier).trim(),
+			priceUpdatedAt:
+				lastUpdated !== null && lastUpdated > 1000 ? excelSerialToDate(lastUpdated) : null,
+			technicalSpecs: Object.keys(specs).length ? specs : null,
+			manualPrices: followsMarkup(costPrice, sheetPrices, markup) ? null : sheetPrices
 		});
 	}
 

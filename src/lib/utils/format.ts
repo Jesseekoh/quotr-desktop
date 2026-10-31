@@ -8,12 +8,3 @@ export function formatNaira(value: string | number | null | undefined): string {
 		maximumFractionDigits: 2
 	}).format(num);
 }
-
-export function categoryLabel(category: string | null | undefined): string {
-	if (!category) return '—';
-	return category
-		.toLowerCase()
-		.split('_')
-		.map((w) => w[0].toUpperCase() + w.slice(1))
-		.join(' ');
-}

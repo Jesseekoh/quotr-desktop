@@ -48,3 +48,11 @@ export async function completeOnboarding(input: BrandSettingsInput) {
 	await updateBrandSettings(input);
 	await db.update(table.brandSettings).set({ onboardedAt: new Date() });
 }
+
+/** Naira step that markup-derived sell prices are rounded to. */
+export async function getPriceRoundingStep(): Promise<number> {
+	const settings = await db.query.brandSettings.findFirst({
+		columns: { priceRoundingStep: true }
+	});
+	return settings?.priceRoundingStep ?? 1000;
+}
