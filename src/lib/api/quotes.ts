@@ -376,7 +376,7 @@ export async function removeSection({ quoteId, id }: { quoteId: string; id: stri
 // ─────────────────────────────────────────────
 
 /** Quote numbers are timestamps, so two made in the same second need a suffix. */
-async function uniqueQuoteNumber() {
+export async function uniqueQuoteNumber() {
 	const base = generateQuoteNumber();
 	let quoteNumber = base;
 	for (let attempt = 2; ; attempt++) {
@@ -389,7 +389,7 @@ async function uniqueQuoteNumber() {
 	}
 }
 
-async function findCustomerOrThrow(id: string) {
+export async function findCustomerOrThrow(id: string) {
 	const customer = await db.query.customer.findFirst({ where: eq(table.customer.id, id) });
 	if (!customer) throw new AppError(404, `Customer ${id} not found`);
 	return customer;
@@ -484,7 +484,7 @@ async function buildItemData(label: PriceLabel, payload: ItemData) {
 	};
 }
 
-function getPriceForLabel(product: Product, label: PriceLabel) {
+export function getPriceForLabel(product: Product, label: PriceLabel) {
 	return {
 		DISCOUNT_PRICE: product.discountPrice,
 		RESALE_PRICE: product.resalePrice,

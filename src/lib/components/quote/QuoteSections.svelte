@@ -62,6 +62,14 @@
 			: `${formatNaira(range.min)} – ${formatNaira(range.max)}`;
 	}
 
+	// Excalidraw-style fills (red, green, blue, yellow), cycled per section.
+	const SECTION_COLORS = [
+		'bg-[#ffc9c9] dark:bg-[#4a2626]',
+		'bg-[#b2f2bb] dark:bg-[#1f3b24]',
+		'bg-[#a5d8ff] dark:bg-[#1c3549]',
+		'bg-[#ffec99] dark:bg-[#463b17]'
+	];
+
 	function sectionItemCount(section: QuoteSection) {
 		return (
 			section.items.length +
@@ -84,7 +92,7 @@
 			</Button>
 		</Card.Action>
 	</Card.Header>
-	<Card.Content class="flex flex-col divide-y">
+	<Card.Content class="flex flex-col gap-4">
 		{#if ungroupedItems.length === 0 && sections.length === 0}
 			<p class="py-6 text-center text-sm text-muted-foreground">
 				No items yet. Add an item, or create a section to organize them.
@@ -92,7 +100,7 @@
 		{/if}
 
 		{#if ungroupedItems.length > 0}
-			<section class="pb-6">
+			<section>
 				{#if sections.length > 0}
 					<h3 class="mb-2 text-sm font-medium text-muted-foreground">General items</h3>
 				{/if}
@@ -115,7 +123,12 @@
 		{/if}
 
 		{#each sections as section, index (section.id)}
-			<section class="py-6 first:pt-0 last:pb-0">
+			<!-- Tinted panel so each section's extent is obvious at a glance. -->
+			<section
+				class="rounded-lg border border-black/5 p-4 dark:border-white/10 {SECTION_COLORS[
+					index % SECTION_COLORS.length
+				]}"
+			>
 				<div class="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
 					<h3 class="mr-auto font-semibold">{index + 1}.0 {section.name}</h3>
 					<div class="flex items-center gap-1">

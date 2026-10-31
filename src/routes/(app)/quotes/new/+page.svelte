@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { PageData } from './$types';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import CustomerPicker from '#lib/components/quote/CustomerPicker.svelte';
@@ -11,6 +12,15 @@
 	import * as Select from '#lib/components/ui/select/index.js';
 	import { createCustomer } from '#lib/api/customers.js';
 	import { createQuote } from '#lib/api/quotes.js';
+	import { createQuoteFromTemplate, templateItemCount } from '#lib/api/templates.js';
+
+	let { data }: { data: PageData } = $props();
+
+	const BLANK = 'blank';
+
+	// svelte-ignore state_referenced_locally
+	let templateId = $state<string | null>(data.templateId);
+	let template = $derived(data.templates.find((candidate) => candidate.id === templateId) ?? null);
 
 	let mode = $state<'existing' | 'new'>('existing');
 	let customerId = $state<string | null>(null);
@@ -20,6 +30,16 @@
 	let loadProfileTotal = $state<number | null>(null);
 	let loadProfileNotes = $state('');
 	let paymentTerms = $state('');
+
+	// Picking a template fills in its saved details; they stay editable.
+	function applyTemplateDefaults() {
+		if (!template) return;
+		label = template.label;
+		loadProfileTotal = template.loadProfileTotal;
+		loadProfileNotes = template.loadProfileNotes ?? '';
+		paymentTerms = template.paymentTerms ?? '';
+	}
+	applyTemplateDefaults();
 
 	let submitting = $state(false);
 	let errorMessage = $state<string | null>(null);
@@ -51,13 +71,16 @@
 				resolvedCustomerId = customer.id;
 			}
 
-			const quote = await createQuote({
+			const details = {
 				customerId: resolvedCustomerId as string,
 				label,
 				loadProfileTotal: loadProfileTotal ?? undefined,
 				loadProfileNotes: loadProfileNotes.trim() || undefined,
 				paymentTerms: paymentTerms.trim() || undefined
-			});
+			};
+			const quote = templateId
+				? await createQuoteFromTemplate({ templateId, ...details })
+				: await createQuote(details);
 
 			await goto(resolve('/(app)/quotes/[id]', { id: quote.id }));
 		} catch (err) {
@@ -87,6 +110,53 @@
 	{/if}
 
 	<form class="flex flex-col gap-6" onsubmit={submit}>
+		{#if data.templates.length > 0}
+			<Card.Root>
+				<Card.Header>
+					<Card.Title>Start from</Card.Title>
+					<Card.Description>
+						Begin with a blank quote or copy the sections and items of a saved template.
+						<a href={resolve('/quotes/templates')} class="underline underline-offset-4">
+							Manage templates
+						</a>
+					</Card.Description>
+				</Card.Header>
+				<Card.Content class="flex flex-col gap-2">
+					<Label for="quote-template">Template</Label>
+					<Select.Root
+						type="single"
+						bind:value={
+							() => templateId ?? BLANK,
+							(value) => {
+								templateId = value === BLANK ? null : value;
+								applyTemplateDefaults();
+							}
+						}
+					>
+						<Select.Trigger id="quote-template" class="w-full">
+							{template?.name ?? 'Blank quote'}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value={BLANK}>Blank quote</Select.Item>
+							{#each data.templates as option (option.id)}
+								<Select.Item value={option.id} label={option.name}>
+									<span class="truncate">{option.name}</span>
+									<span class="ms-auto text-xs text-muted-foreground">
+										{templateItemCount(option.content)} items
+									</span>
+								</Select.Item>
+							{/each}
+						</Select.Content>
+					</Select.Root>
+					{#if template}
+						<p class="text-xs text-muted-foreground">
+							Catalog items are priced at today's prices for the price label below.
+						</p>
+					{/if}
+				</Card.Content>
+			</Card.Root>
+		{/if}
+
 		<Card.Root>
 			<Card.Header>
 				<Card.Title>Customer</Card.Title>

@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import FileDownIcon from '@tabler/icons-svelte/icons/file-download';
 	import FileInvoiceIcon from '@tabler/icons-svelte/icons/file-invoice';
+	import TemplateIcon from '@tabler/icons-svelte/icons/template';
 	import type { PriceLabel, QuoteStatus } from '#lib/api/types.js';
 	import type { QuoteDetail } from '#lib/api/quotes.js';
 	import { PRICE_LABEL_OPTIONS } from '#lib/utils/pricing.js';
@@ -20,6 +21,7 @@
 		showPreview,
 		onShowPreviewChange,
 		onCreateInvoice,
+		onSaveTemplate,
 		disabled = false,
 		children
 	}: {
@@ -30,6 +32,7 @@
 		showPreview: boolean;
 		onShowPreviewChange: (show: boolean) => void;
 		onCreateInvoice: () => void;
+		onSaveTemplate: () => void;
 		disabled?: boolean;
 		// Extra quote-level fields shown beside the price label.
 		children?: Snippet;
@@ -105,6 +108,10 @@
 			>
 				<FileDownIcon class="size-4" />
 				{exporting ? 'Exporting…' : 'Export PDF'}
+			</Button>
+			<Button type="button" variant="outline" onclick={onSaveTemplate} {disabled}>
+				<TemplateIcon class="size-4" />
+				Save as template
 			</Button>
 			<Button type="button" onclick={onCreateInvoice} {disabled}>
 				<FileInvoiceIcon class="size-4" />

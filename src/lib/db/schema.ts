@@ -318,6 +318,63 @@ export const quoteItem = sqliteTable(
 	]
 );
 // ─────────────────────────────────────────────
+// Quote Template
+//
+// A named snapshot of a quote's layout (sections, options, items) to start new
+// quotes from. Lines are stored as JSON since a template is only ever read and
+// written whole; catalog lines are re-priced when a quote is made from it.
+// ─────────────────────────────────────────────
+
+export type TemplateItem = {
+	productId: string | null;
+	description: string;
+	brand: string | null;
+	specification: string | null;
+	category: string | null;
+	quantity: number;
+	unit: string | null;
+	unitPrice: number;
+};
+
+export type TemplateContent = {
+	items: TemplateItem[];
+	sections: {
+		name: string;
+		items: TemplateItem[];
+		options: {
+			name: string;
+			description: string | null;
+			isDefault: boolean;
+			items: TemplateItem[];
+		}[];
+	}[];
+};
+
+export const quoteTemplate = sqliteTable('quote_template', {
+	id: text('id')
+		.primaryKey()
+		.$defaultFn(() => createId()),
+
+	name: text('name').notNull().unique(),
+
+	label: text('label', { enum: priceLabels }).notNull().default('ENDUSER_PRICE'),
+
+	showBrand: integer('show_brand', { mode: 'boolean' }).notNull().default(true),
+
+	loadProfileTotal: integer('load_profile_total'),
+
+	loadProfileNotes: text('load_profile_notes'),
+
+	paymentTerms: text('payment_terms'),
+
+	notes: text('notes'),
+
+	content: text('content', { mode: 'json' }).$type<TemplateContent>().notNull(),
+
+	...timestamps
+});
+
+// ─────────────────────────────────────────────
 // Invoice
 //
 // Created from a quote once the customer picks one option per section. Lines

@@ -9,6 +9,7 @@
 	import QuoteSections from '#lib/components/quote/QuoteSections.svelte';
 	import QuotePreview from '#lib/components/quote/QuotePreview.svelte';
 	import CreateInvoiceDialog from '#lib/components/quote/CreateInvoiceDialog.svelte';
+	import SaveTemplateDialog from '#lib/components/quote/SaveTemplateDialog.svelte';
 	import { errorMessage as messageFor } from '#lib/api/types.js';
 	import type { PriceLabel, QuoteStatus } from '#lib/api/types.js';
 	import type { CreateItemPayload } from '#lib/api/quotes.js';
@@ -42,6 +43,7 @@
 	let errorMessage = $state<string | null>(null);
 	let showPreview = $state(false);
 	let showCreateInvoice = $state(false);
+	let showSaveTemplate = $state(false);
 	let hydrated = $state(false);
 	let loadProfileDraft = $state<{
 		loadProfileTotal: number | null;
@@ -255,6 +257,7 @@
 			{showPreview}
 			onShowPreviewChange={(value) => (showPreview = value)}
 			onCreateInvoice={() => (showCreateInvoice = true)}
+			onSaveTemplate={() => (showSaveTemplate = true)}
 			disabled={loading}
 		>
 			<LoadProfileFields
@@ -291,6 +294,8 @@
 		</div>
 	</div>
 {/key}
+
+<SaveTemplateDialog bind:open={showSaveTemplate} quoteId={quote.id} />
 
 <CreateInvoiceDialog
 	bind:open={showCreateInvoice}

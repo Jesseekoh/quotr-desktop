@@ -6,6 +6,7 @@
 	import ArrowUpRightIcon from '@tabler/icons-svelte/icons/arrow-up-right';
 	import FileDescriptionIcon from '@tabler/icons-svelte/icons/file-description';
 	import FileDownIcon from '@tabler/icons-svelte/icons/file-download';
+	import TemplateIcon from '@tabler/icons-svelte/icons/template';
 	import { IconAlertCircle } from '@tabler/icons-svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
@@ -118,10 +119,16 @@
 					<h1 class="text-2xl font-semibold tracking-tight">Quotes</h1>
 					<p class="text-sm text-muted-foreground">Manage your customer quotes.</p>
 				</div>
-				<Button href={resolve('/quotes/new')}>
-					<PlusIcon class="size-4" />
-					New quote
-				</Button>
+				<div class="flex gap-2">
+					<Button variant="outline" href={resolve('/quotes/templates')}>
+						<TemplateIcon class="size-4" />
+						Templates
+					</Button>
+					<Button href={resolve('/quotes/new')}>
+						<PlusIcon class="size-4" />
+						New quote
+					</Button>
+				</div>
 			</div>
 
 			{#if errorMessage}

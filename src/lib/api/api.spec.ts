@@ -13,6 +13,7 @@ const products = await import('./products.js');
 const customers = await import('./customers.js');
 const quotes = await import('./quotes.js');
 const invoices = await import('./invoices.js');
+const templates = await import('./templates.js');
 const dashboard = await import('./dashboard.js');
 const { parseWorkbook } = await import('#lib/utils/product-import.js');
 const { priceFromMarkup } = await import('#lib/utils/markups.js');
@@ -552,5 +553,92 @@ describe('categories and re-import', () => {
 				specialPrice: 1
 			})
 		).rejects.toThrow(/category that exists/);
+	});
+});
+
+describe('quote templates', () => {
+	it('saves a quote as a template and starts new quotes from it', async () => {
+		const customer = await customers.createCustomer({ name: 'Template Customer' });
+		const [inverter] = await products.getProducts({ search: 'growatt' });
+		const { id: quoteId } = await quotes.createQuote({
+			customerId: customer.id,
+			label: 'ENDUSER_PRICE',
+			paymentTerms: '70% upfront'
+		});
+		await quotes.updateQuote({ id: quoteId, showBrand: false });
+		await quotes.addItem({ quoteId, data: { description: 'Installation', unitPrice: 50_000 } });
+		let quote = await quotes.addSection({ quoteId, name: 'Batteries' });
+		const sectionId = quote.sections[0].id;
+		quote = await quotes.addOption({ quoteId, quoteSectionId: sectionId, name: '2 batteries' });
+		quote = await quotes.addOption({ quoteId, quoteSectionId: sectionId, name: '4 batteries' });
+		const [twoBatteries, fourBatteries] = quote.sections[0].options;
+		await quotes.addItem({
+			quoteId,
+			data: { productId: inverter.id, quantity: 2 },
+			quoteSectionId: sectionId,
+			quoteOptionId: twoBatteries.id
+		});
+		await quotes.addItem({
+			quoteId,
+			data: { description: 'Battery rack', unitPrice: 30_000 },
+			quoteSectionId: sectionId,
+			quoteOptionId: fourBatteries.id
+		});
+
+		const saved = await templates.saveQuoteAsTemplate({
+			quoteId,
+			name: '  10kVA inverter with battery options '
+		});
+		expect(saved).toMatchObject({ name: '10kVA inverter with battery options', showBrand: false });
+		expect(templates.templateItemCount(saved.content)).toBe(3);
+
+		// Saving under the same name (any case) replaces rather than duplicates.
+		await quotes.addItem({ quoteId, data: { description: 'Cabling', unitPrice: 20_000 } });
+		const replaced = await templates.saveQuoteAsTemplate({
+			quoteId,
+			name: '10KVA INVERTER WITH BATTERY OPTIONS'
+		});
+		expect(replaced.id).toBe(saved.id);
+		expect(templates.templateItemCount(replaced.content)).toBe(4);
+		expect(await templates.getTemplates()).toHaveLength(1);
+
+		const other = await templates.saveQuoteAsTemplate({ quoteId, name: 'Other' });
+		await expect(
+			templates.renameTemplate({ id: other.id, name: '10kva inverter with battery options' })
+		).rejects.toThrow(/already exists/);
+		await templates.removeTemplate(other.id);
+
+		// A new quote copies the layout and re-prices catalog items for its own label.
+		const second = await customers.createCustomer({ name: 'Second Customer' });
+		const created = await templates.createQuoteFromTemplate({
+			templateId: saved.id,
+			customerId: second.id,
+			label: 'RESALE_PRICE'
+		});
+		const fromTemplate = await quotes.getQuote(created.id);
+		expect(fromTemplate).toMatchObject({
+			customerId: second.id,
+			label: 'RESALE_PRICE',
+			status: 'DRAFT',
+			showBrand: false,
+			paymentTerms: '70% upfront'
+		});
+		expect(
+			fromTemplate.items.filter((item) => !item.quoteSectionId).map((i) => i.description)
+		).toEqual(['Installation', 'Cabling']);
+		const [section] = fromTemplate.sections;
+		expect(section.name).toBe('Batteries');
+		expect(section.options.map((option) => option.name)).toEqual(['2 batteries', '4 batteries']);
+		const [catalogItem] = section.options[0].items;
+		const resalePrice = (await products.getProducts({ search: 'growatt' }))[0].resalePrice;
+		expect(catalogItem).toMatchObject({
+			productId: inverter.id,
+			unitPrice: resalePrice,
+			totalPrice: resalePrice * 2
+		});
+		expect(section.options[1].items[0]).toMatchObject({
+			description: 'Battery rack',
+			unitPrice: 30_000
+		});
 	});
 });
