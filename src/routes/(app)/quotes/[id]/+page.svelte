@@ -121,6 +121,12 @@
 		});
 	}
 
+	async function handleShowBrandChange(showBrand: boolean) {
+		await withLoading(async () => {
+			quote = await updateQuote({ id: quote.id, showBrand });
+		});
+	}
+
 	async function handleLoadProfileSave(payload: {
 		loadProfileTotal: number | null;
 		loadProfileNotes: string;
@@ -245,6 +251,7 @@
 			{quote}
 			onLabelChange={handleLabelChange}
 			onStatusChange={handleStatusChange}
+			onShowBrandChange={handleShowBrandChange}
 			{showPreview}
 			onShowPreviewChange={(value) => (showPreview = value)}
 			onCreateInvoice={() => (showCreateInvoice = true)}

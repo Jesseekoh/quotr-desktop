@@ -29,6 +29,13 @@
       "when": 1792913767066,
       "tag": "0003_drop_category_markup",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793464785508,
+      "tag": "0004_quote_show_brand",
+      "breakpoints": true
     }
   ]
 }

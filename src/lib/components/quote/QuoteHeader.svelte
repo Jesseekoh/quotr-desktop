@@ -16,6 +16,7 @@
 		quote,
 		onLabelChange,
 		onStatusChange,
+		onShowBrandChange,
 		showPreview,
 		onShowPreviewChange,
 		onCreateInvoice,
@@ -25,6 +26,7 @@
 		quote: QuoteDetail;
 		onLabelChange: (label: PriceLabel) => void;
 		onStatusChange: (status: QuoteStatus) => void;
+		onShowBrandChange: (show: boolean) => void;
 		showPreview: boolean;
 		onShowPreviewChange: (show: boolean) => void;
 		onCreateInvoice: () => void;
@@ -82,6 +84,17 @@
 					{disabled}
 				/>
 				<Label for="quote-preview-toggle">Show preview</Label>
+			</div>
+			<div class="flex items-center gap-2">
+				<Switch.Root
+					id="quote-brand-toggle"
+					checked={quote.showBrand}
+					onCheckedChange={onShowBrandChange}
+					{disabled}
+				/>
+				<Label for="quote-brand-toggle" title="Print each item's brand in its description">
+					Show brand
+				</Label>
 			</div>
 			<Button
 				type="button"

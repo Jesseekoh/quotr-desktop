@@ -90,6 +90,7 @@ export interface UpdateQuotePayload {
 	loadProfileNotes?: string | null;
 	paymentTerms?: string | null;
 	notes?: string | null;
+	showBrand?: boolean;
 }
 
 export async function updateQuote({ id, ...payload }: UpdateQuotePayload) {
@@ -138,7 +139,8 @@ export async function duplicateQuote(id: string) {
 			loadProfileTotal: quote.loadProfileTotal,
 			loadProfileNotes: quote.loadProfileNotes,
 			paymentTerms: quote.paymentTerms,
-			notes: quote.notes
+			notes: quote.notes,
+			showBrand: quote.showBrand
 		});
 		if (sections.length) {
 			await tx.insert(table.quoteSection).values(

@@ -8,6 +8,7 @@
 	} from '#lib/api/types.js';
 	import BrandHeader from '#lib/components/brand-header.svelte';
 	import { formatNaira } from '#lib/utils/format.js';
+	import { itemDescription } from '#lib/utils/quotes.js';
 	import { lineTotal, optionTotal, quoteTotals, sectionRange } from '#lib/utils/quote-totals.js';
 	import * as Table from '#lib/components/ui/table/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
@@ -18,6 +19,7 @@
 		label: PriceLabel;
 		loadProfileTotal: number | null;
 		loadProfileNotes: string | null;
+		showBrand: boolean;
 		createdAt?: string | Date;
 		customer?: Pick<Customer, 'name' | 'email' | 'phone' | 'address'>;
 		items: QuoteItem[];
@@ -67,7 +69,7 @@
 {#snippet itemRow(item: QuoteItem)}
 	<Table.Row>
 		<Table.Cell class="max-w-56 wrap-break-word whitespace-normal">
-			{item.description}
+			{itemDescription(item, quote.showBrand)}
 		</Table.Cell>
 		<Table.Cell class="text-center tabular-nums">{item.quantity}</Table.Cell>
 		<Table.Cell class="text-right tabular-nums">{formatNaira(item.unitPrice)}</Table.Cell>

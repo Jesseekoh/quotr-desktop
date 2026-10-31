@@ -1,6 +1,7 @@
 import type { Content, TDocumentDefinitions, TableCell } from 'pdfmake/interfaces';
 import type { QuoteItem, QuoteOption, QuoteSection } from '#lib/api/types.js';
 import { formatNaira } from '#lib/utils/format.js';
+import { itemDescription } from '#lib/utils/quotes.js';
 import { lineTotal, optionTotal, quoteTotals, sectionRange } from '#lib/utils/quote-totals.js';
 import {
 	COLORS,
@@ -28,6 +29,7 @@ export type PdfQuote = {
 	quoteNumber: string;
 	loadProfileTotal: string | number | null;
 	loadProfileNotes: string | null;
+	showBrand?: boolean;
 	createdAt?: string | Date;
 	customer?: PdfCustomer;
 	items?: QuoteItem[];
@@ -54,9 +56,9 @@ function rangeLabel(min: number, max: number) {
 	return min === max ? formatNaira(min) : `${formatNaira(min)} – ${formatNaira(max)}`;
 }
 
-function itemRow(item: QuoteItem): TableCell[] {
+function itemRow(item: QuoteItem, showBrand: boolean): TableCell[] {
 	return [
-		{ text: item.description },
+		{ text: itemDescription(item, showBrand) },
 		{ text: String(item.quantity), alignment: 'center' },
 		{ text: formatNaira(item.unitPrice), alignment: 'right' },
 		{ text: formatNaira(lineTotal(item)), alignment: 'right' }
@@ -72,6 +74,7 @@ export function buildQuoteDocument(quote: PdfQuote, brand?: PdfBrand | null): TD
 	const totals = quoteTotals({ items: quote.items ?? [], sections });
 	const commonItems = (quote.items ?? []).filter((item) => item.quoteSectionId === null);
 	const issuedDate = quote.createdAt ? dateFormatter.format(new Date(quote.createdAt)) : '—';
+	const row = (item: QuoteItem) => itemRow(item, quote.showBrand ?? true);
 	const content: Content[] = [];
 
 	content.push(
@@ -80,11 +83,11 @@ export function buildQuoteDocument(quote: PdfQuote, brand?: PdfBrand | null): TD
 	);
 
 	if (commonItems.length > 0) {
-		content.push(sectionHeading('Common items'), itemTable(commonItems.map(itemRow)), spacer());
+		content.push(sectionHeading('Common items'), itemTable(commonItems.map(row)), spacer());
 	}
 
 	sections.forEach((section, index) => {
-		const body: TableCell[][] = section.items.map(itemRow);
+		const body: TableCell[][] = section.items.map(row);
 		section.options.forEach((option, optionIndex) => {
 			const name = option.name || 'Option';
 			body.push([
@@ -98,7 +101,7 @@ export function buildQuoteDocument(quote: PdfQuote, brand?: PdfBrand | null): TD
 				{},
 				{}
 			]);
-			body.push(...option.items.map(itemRow));
+			body.push(...option.items.map(row));
 			body.push([
 				{ text: `Subtotal · ${name}`, colSpan: 3, alignment: 'right', color: COLORS.muted },
 				{},

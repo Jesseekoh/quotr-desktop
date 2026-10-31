@@ -195,6 +195,9 @@ export const quote = sqliteTable(
 
 		notes: text('notes'),
 
+		// Whether the preview and PDF print each item's brand in its description.
+		showBrand: integer('show_brand', { mode: 'boolean' }).notNull().default(true),
+
 		...timestamps
 	},
 	(table) => [index('quote_customer_id_idx').on(table.customerId)]
