@@ -54,11 +54,12 @@ function headerRow(): TableCell[] {
 	];
 }
 
-export function itemTable(body: TableCell[][]): ContentTable {
+export function itemTable(body: TableCell[][], { repeatHeader = true } = {}): ContentTable {
 	return {
 		table: {
-			// Repeat the column header on every page the table spans.
-			headerRows: 1,
+			// Repeat the column header on every page the table spans. Not inside a
+			// tintedPanel: pdfmake draws the repeated row misaligned in nested tables.
+			headerRows: repeatHeader ? 1 : 0,
 			dontBreakRows: true,
 			widths: ['*', 40, 'auto', 'auto'],
 			body: [headerRow(), ...body]
@@ -79,6 +80,26 @@ export function totalLine(label: string, value: string): Content {
 
 export function sectionHeading(text: string): Content {
 	return { text, style: 'h2', headlineLevel: 1 };
+}
+
+// Light-mode section fills from QuoteSections.svelte, cycled per section.
+export const SECTION_FILLS = ['#ffc9c9', '#b2f2bb', '#a5d8ff', '#ffec99'];
+
+// A borderless, padded single-cell table tinted with `fill`. The heading-keeping
+// page break applies to the whole panel, since it can't reach inside a cell.
+export function tintedPanel(fill: string, stack: Content[]): ContentTable {
+	return {
+		headlineLevel: 1,
+		table: { widths: ['*'], body: [[{ stack, fillColor: fill }]] },
+		layout: {
+			hLineWidth: () => 0,
+			vLineWidth: () => 0,
+			paddingLeft: () => 12,
+			paddingRight: () => 12,
+			paddingTop: () => 12,
+			paddingBottom: () => 12
+		}
+	};
 }
 
 export function spacer(): Content {

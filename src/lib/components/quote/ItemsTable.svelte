@@ -38,6 +38,23 @@
 	// Descriptions wrap instead of clipping, but stay single-line: Enter commits.
 	const descriptionInput = `${cellInput} h-auto min-h-8 resize-none py-1.5`;
 
+	// WebKit webviews don't support `field-sizing: content`, so grow the textarea
+	// to fit its text manually — on typing and whenever the column width changes.
+	function autosize(textarea: HTMLTextAreaElement) {
+		const fit = () => {
+			textarea.style.height = 'auto';
+			textarea.style.height = `${textarea.scrollHeight + textarea.offsetHeight - textarea.clientHeight}px`;
+		};
+		fit();
+		const observer = new ResizeObserver(fit);
+		observer.observe(textarea);
+		textarea.addEventListener('input', fit);
+		return () => {
+			observer.disconnect();
+			textarea.removeEventListener('input', fit);
+		};
+	}
+
 	function blurOnEnter(event: KeyboardEvent) {
 		if (event.key !== 'Enter') return;
 		event.preventDefault();
@@ -168,6 +185,7 @@
 									onchange={(e) => commitDescription(item, e)}
 									onkeydown={blurOnEnter}
 									aria-label="Description"
+									{@attach autosize}
 									class={descriptionInput}
 								/>
 								{#if itemSublabel(item)}
@@ -223,6 +241,7 @@
 								onchange={(e) => commitDescription(item, e)}
 								onkeydown={blurOnEnter}
 								aria-label="Description"
+								{@attach autosize}
 								class={descriptionInput}
 							/>
 							{#if itemSublabel(item)}
