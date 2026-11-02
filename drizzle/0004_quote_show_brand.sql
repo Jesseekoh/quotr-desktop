@@ -1,0 +1,1 @@
+ALTER TABLE `quote` ADD `show_brand` integer DEFAULT true NOT NULL;
