@@ -24,6 +24,11 @@ export default defineConfig(() => ({
 					port: 1421
 				}
 			: undefined,
+		// SvelteKit narrows the dev server's file allow list to src/, .svelte-kit/ and
+		// node_modules/, so the migration SQL that src/lib/db/index.ts globs needs adding.
+		fs: {
+			allow: ['drizzle']
+		},
 		watch: {
 			// 3. tell Vite to ignore watching `src-tauri`
 			ignored: ['**/src-tauri/**']

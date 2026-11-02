@@ -76,14 +76,19 @@
 		}
 	});
 
+	// Only show the disabled state for slow saves: most local writes finish in a
+	// few ms, and dimming every control for that long reads as a flicker.
+	const LOADING_DELAY_MS = 200;
+
 	async function withLoading(fn: () => Promise<void>) {
-		loading = true;
+		const timer = setTimeout(() => (loading = true), LOADING_DELAY_MS);
 		errorMessage = null;
 		try {
 			await fn();
 		} catch (e) {
 			errorMessage = messageFor(e);
 		} finally {
+			clearTimeout(timer);
 			loading = false;
 		}
 	}
