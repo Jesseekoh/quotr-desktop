@@ -118,6 +118,44 @@
 		}
 	});
 
+	// Readable names for the spec keys the price-list import writes.
+	const SPEC_LABELS: Record<string, string> = {
+		type: 'Type',
+		capacity: 'Capacity',
+		input: 'Input',
+		dcVoltage: 'DC voltage',
+		mppV: 'MPP voltage',
+		mppA: 'MPP current',
+		mppT: 'MPPT',
+		size: 'Size'
+	};
+
+	/** Warranty, unit and technical specs of the selected product, blanks dropped. */
+	let selectedDetails = $derived.by(() => {
+		if (!selectedProduct) return [];
+		const specs = (selectedProduct.technicalSpecs ?? {}) as Record<string, unknown>;
+		const rows: [string, unknown][] = [
+			...Object.entries(specs).map(([key, value]): [string, unknown] => [
+				SPEC_LABELS[key] ?? key,
+				value
+			]),
+			['Warranty', selectedProduct.warranty],
+			['Unit', selectedProduct.unit]
+		];
+		return rows
+			.filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== '')
+			.filter(([label, value]) => !(label === 'Warranty' && value === 'N/A'))
+			.map(([label, value]) => ({
+				label,
+				// Price lists nudge some numbers (e.g. 675.0005) so Excel shows 675 but
+				// keeps them unique; show what the sheet shows.
+				value:
+					typeof value === 'number'
+						? value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+						: String(value)
+			}));
+	});
+
 	function selectProduct(product: Product) {
 		selectedProduct = selectedProduct?.id === product.id ? null : product;
 	}
@@ -263,9 +301,24 @@
 					</div>
 
 					{#if selectedProduct}
-						<div class="flex items-center justify-between gap-3 rounded-md border bg-muted/40 p-3">
-							<p class="text-sm text-muted-foreground">{selectedProduct.specification}</p>
-							<div class="flex items-center gap-2">
+						<div class="flex items-start justify-between gap-3 rounded-md border bg-muted/40 p-3">
+							<div class="flex min-w-0 flex-col gap-2">
+								<p class="text-sm">
+									<span class="font-medium">{selectedProduct.brand}</span>
+									<span class="text-muted-foreground">· {selectedProduct.specification}</span>
+								</p>
+								{#if selectedDetails.length}
+									<dl
+										class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr_auto_1fr]"
+									>
+										{#each selectedDetails as { label, value } (label)}
+											<dt class="text-muted-foreground">{label}</dt>
+											<dd class="truncate">{value}</dd>
+										{/each}
+									</dl>
+								{/if}
+							</div>
+							<div class="flex shrink-0 items-center gap-2">
 								<Label for="catalog-qty" class="text-sm">Quantity</Label>
 								<Input id="catalog-qty" type="number" min="1" bind:value={quantity} class="w-20" />
 							</div>
