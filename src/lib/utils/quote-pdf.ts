@@ -5,6 +5,7 @@ import { itemDescription } from '#lib/utils/quotes.js';
 import { lineTotal, optionTotal, quoteTotals, sectionRange } from '#lib/utils/quote-totals.js';
 import {
 	COLORS,
+	SECTION_FILLS,
 	billToBlock,
 	dateFormatter,
 	documentHeader,
@@ -16,6 +17,7 @@ import {
 	sectionHeading,
 	spacer,
 	tableLayout,
+	tintedPanel,
 	totalLine,
 	type PdfBrand,
 	type PdfCustomer
@@ -113,9 +115,11 @@ export function buildQuoteDocument(quote: PdfQuote, brand?: PdfBrand | null): TD
 
 		const range = sectionRange(section);
 		content.push(
-			sectionHeading(`${index + 1}.0 ${section.name}`),
-			itemTable(body),
-			totalLine('Total', rangeLabel(range.min, range.max)),
+			tintedPanel(SECTION_FILLS[index % SECTION_FILLS.length], [
+				{ text: `${index + 1}.0 ${section.name}`, style: 'h2' },
+				itemTable(body, { repeatHeader: false }),
+				totalLine('Total', rangeLabel(range.min, range.max))
+			]),
 			spacer()
 		);
 	});
