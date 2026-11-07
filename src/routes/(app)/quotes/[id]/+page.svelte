@@ -28,6 +28,7 @@
 		addItem,
 		updateItem,
 		removeItem,
+		compressItems,
 		addOption,
 		updateOption
 	} from '#lib/api/quotes.js';
@@ -57,6 +58,8 @@
 	let showAddItemModal = $state(false);
 	let showAddOptionModal = $state(false);
 	let showAddSectionModal = $state(false);
+	// Freshly compressed line whose description gets focus so it can be renamed right away.
+	let focusItemId = $state<string | null>(null);
 
 	onMount(() => {
 		try {
@@ -214,6 +217,14 @@
 		});
 	}
 
+	async function handleCompressItems(itemIds: string[]) {
+		await withLoading(async () => {
+			const result = await compressItems({ quoteId: quote.id, ids: itemIds });
+			quote = result.quote;
+			focusItemId = result.itemId;
+		});
+	}
+
 	async function handleMoveItem(itemId: string, sectionId: string | null, optionId: string | null) {
 		await withLoading(async () => {
 			quote = await updateItem({
@@ -288,6 +299,9 @@
 					onItemChange={handleItemChange}
 					onRemoveItem={handleRemoveItem}
 					onMoveItem={handleMoveItem}
+					onCompressItems={handleCompressItems}
+					{focusItemId}
+					onFocused={() => (focusItemId = null)}
 				/>
 
 				<TotalsSummary {totals} />

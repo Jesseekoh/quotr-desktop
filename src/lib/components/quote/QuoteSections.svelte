@@ -25,7 +25,10 @@
 		onRemoveSection,
 		onItemChange,
 		onRemoveItem,
-		onMoveItem
+		onMoveItem,
+		onCompressItems,
+		focusItemId = null,
+		onFocused
 	}: {
 		ungroupedItems: QuoteSection['items'];
 		sections: QuoteSection[];
@@ -41,6 +44,9 @@
 		) => void;
 		onRemoveItem: (itemId: string) => void;
 		onMoveItem: (itemId: string, sectionId: string | null, optionId: string | null) => void;
+		onCompressItems: (itemIds: string[]) => void;
+		focusItemId?: string | null;
+		onFocused?: () => void;
 	} = $props();
 
 	function requestRemoveSection(section: QuoteSection) {
@@ -118,6 +124,9 @@
 					{onItemChange}
 					onRemove={onRemoveItem}
 					onMove={onMoveItem}
+					onCompress={onCompressItems}
+					{focusItemId}
+					{onFocused}
 				/>
 			</section>
 		{/if}
@@ -193,6 +202,9 @@
 						{onItemChange}
 						onRemove={onRemoveItem}
 						onMove={onMoveItem}
+						onCompress={onCompressItems}
+						{focusItemId}
+						{onFocused}
 					/>
 				{/if}
 				<SectionOptionsTabs
@@ -204,6 +216,9 @@
 					{onItemChange}
 					{onRemoveItem}
 					{onMoveItem}
+					{onCompressItems}
+					{focusItemId}
+					{onFocused}
 				/>
 			</section>
 		{/each}

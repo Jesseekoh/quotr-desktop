@@ -320,6 +320,68 @@ export async function removeItem({ quoteId, id }: { quoteId: string; id: string 
 	return getQuote(quoteId);
 }
 
+/**
+ * Replace several lines in one place (general items, a section's shared items,
+ * or one option) with a single freeform line priced at their combined total.
+ * The new line takes the position of the earliest merged line. Returns the
+ * refreshed quote and the new line's id so the caller can focus it.
+ */
+export async function compressItems({
+	quoteId,
+	ids,
+	description
+}: {
+	quoteId: string;
+	ids: string[];
+	description?: string;
+}) {
+	const uniqueIds = [...new Set(ids)];
+	if (uniqueIds.length < 2) throw new AppError(400, 'Select at least two items to compress');
+	await findQuoteOrThrow(quoteId);
+
+	const items = await db.query.quoteItem.findMany({
+		where: and(eq(table.quoteItem.quoteId, quoteId), inArray(table.quoteItem.id, uniqueIds)),
+		orderBy: [asc(table.quoteItem.sortOrder), asc(table.quoteItem.createdAt)]
+	});
+	if (items.length !== uniqueIds.length) {
+		throw new AppError(404, `Some items were not found on quote ${quoteId}`);
+	}
+	const [first] = items;
+	const sameGroup = items.every(
+		(item) =>
+			item.quoteSectionId === first.quoteSectionId && item.quoteOptionId === first.quoteOptionId
+	);
+	if (!sameGroup)
+		throw new AppError(400, 'Only items in the same section or option can be compressed');
+
+	const total = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+	const categories = new Set(items.map((item) => item.category));
+	const id = createId();
+
+	await db.transaction(async (tx) => {
+		await tx.insert(table.quoteItem).values({
+			id,
+			quoteId,
+			quoteSectionId: first.quoteSectionId,
+			quoteOptionId: first.quoteOptionId,
+			productId: null,
+			description: description?.trim() || items.map((item) => item.description.trim()).join(', '),
+			brand: null,
+			specification: null,
+			category: categories.size === 1 ? first.category : null,
+			quantity: 1,
+			unit: 'lot',
+			unitPrice: total,
+			totalPrice: total,
+			sortOrder: first.sortOrder,
+			createdAt: first.createdAt
+		});
+		await tx.delete(table.quoteItem).where(inArray(table.quoteItem.id, uniqueIds));
+	});
+
+	return { quote: await getQuote(quoteId), itemId: id };
+}
+
 // ─────────────────────────────────────────────
 // Sections
 // ─────────────────────────────────────────────
