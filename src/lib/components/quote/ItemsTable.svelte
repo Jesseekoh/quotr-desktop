@@ -7,14 +7,20 @@
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
+	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import DotsIcon from '@tabler/icons-svelte/icons/dots';
+	import LayersUnionIcon from '@tabler/icons-svelte/icons/layers-union';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	let {
 		items,
 		destinations = [],
 		onItemChange,
 		onRemove,
-		onMove
+		onMove,
+		onCompress,
+		focusItemId = null,
+		onFocused
 	}: {
 		items: QuoteItem[];
 		destinations?: {
@@ -29,7 +35,47 @@
 		) => void;
 		onRemove: (itemId: string) => void;
 		onMove?: (itemId: string, sectionId: string | null, optionId: string | null) => void;
+		/** Merge the given items (all from this table) into one line. Enables row selection. */
+		onCompress?: (itemIds: string[]) => void;
+		/** Item whose description should take focus once rendered, e.g. right after compressing. */
+		focusItemId?: string | null;
+		onFocused?: () => void;
 	} = $props();
+
+	// Selection is per table, so it always stays within one section/option.
+	// Ids that leave the table (removed, moved, compressed) simply stop counting.
+	const selected = new SvelteSet<string>();
+	let selectedItems = $derived(items.filter((item) => selected.has(item.id)));
+	let selectable = $derived(!!onCompress && items.length >= 2);
+	let allSelected = $derived(selectable && selectedItems.length === items.length);
+	let someSelected = $derived(selectedItems.length > 0 && !allSelected);
+
+	function toggleItem(itemId: string, checked: boolean) {
+		if (checked) selected.add(itemId);
+		else selected.delete(itemId);
+	}
+
+	function toggleAll(checked: boolean) {
+		selected.clear();
+		if (checked) for (const item of items) selected.add(item.id);
+	}
+
+	function compressSelected() {
+		if (!onCompress || selectedItems.length < 2) return;
+		onCompress(selectedItems.map((item) => item.id));
+		selected.clear();
+	}
+
+	// Focus and select the description so a freshly compressed line can be renamed straight away.
+	// Both the table and card layouts render; focus() is a no-op on the hidden one.
+	function focusWhen(shouldFocus: boolean) {
+		return (textarea: HTMLTextAreaElement) => {
+			if (!shouldFocus || textarea.offsetParent === null) return;
+			textarea.focus();
+			textarea.select();
+			onFocused?.();
+		};
+	}
 
 	// Borderless until hover/focus so the table stays readable while signalling editability.
 	const cellInput =
@@ -162,12 +208,49 @@
 	<p class="py-3 text-sm text-muted-foreground">No items yet.</p>
 {:else}
 	<div class="@container/items">
+		{#if selectedItems.length > 0}
+			<div
+				class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-background/70 px-3 py-1.5 text-sm"
+				role="toolbar"
+				aria-label="Selected items"
+			>
+				<span class="font-medium">{selectedItems.length} selected</span>
+				<span class="text-muted-foreground tabular-nums">
+					{formatNaira(selectedItems.reduce((total, item) => total + lineTotal(item), 0))}
+				</span>
+				<div class="ml-auto flex items-center gap-1">
+					<Button type="button" variant="ghost" size="sm" onclick={() => selected.clear()}>
+						Clear
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						disabled={selectedItems.length < 2}
+						title={selectedItems.length < 2 ? 'Select at least two items' : undefined}
+						onclick={compressSelected}
+					>
+						<LayersUnionIcon class="size-4" />
+						Compress into one line
+					</Button>
+				</div>
+			</div>
+		{/if}
 		<div class="hidden overflow-x-auto @xl/items:block">
 			<Table.Root>
 				<Table.Header>
 					<Table.Row
 						class="hover:bg-transparent [&>th]:h-8 [&>th]:text-xs [&>th]:font-normal [&>th]:text-muted-foreground"
 					>
+						{#if selectable}
+							<Table.Head class="w-8 pr-0">
+								<Checkbox
+									checked={allSelected}
+									indeterminate={someSelected}
+									onCheckedChange={toggleAll}
+									aria-label="Select all items"
+								/>
+							</Table.Head>
+						{/if}
 						<Table.Head>Description</Table.Head>
 						<Table.Head class="text-right">Qty</Table.Head>
 						<Table.Head class="text-right">Unit price</Table.Head>
@@ -177,7 +260,17 @@
 				</Table.Header>
 				<Table.Body>
 					{#each items as item (item.id)}
-						<Table.Row>
+						<Table.Row data-state={selected.has(item.id) ? 'selected' : undefined}>
+							{#if selectable}
+								<Table.Cell class="w-8 pr-0 align-top">
+									<Checkbox
+										class="mt-2"
+										checked={selected.has(item.id)}
+										onCheckedChange={(checked) => toggleItem(item.id, checked)}
+										aria-label={`Select ${item.description}`}
+									/>
+								</Table.Cell>
+							{/if}
 							<Table.Cell class="max-w-xs min-w-48 whitespace-normal">
 								<Textarea
 									rows={1}
@@ -186,6 +279,7 @@
 									onkeydown={blurOnEnter}
 									aria-label="Description"
 									{@attach autosize}
+									{@attach focusWhen(item.id === focusItemId)}
 									class={descriptionInput}
 								/>
 								{#if itemSublabel(item)}
@@ -232,8 +326,16 @@
 
 		<div class="flex flex-col gap-3 @xl/items:hidden">
 			{#each items as item (item.id)}
-				<article class="rounded-md border p-3">
+				<article class="rounded-md border p-3 {selected.has(item.id) ? 'bg-muted' : ''}">
 					<div class="flex items-start justify-between gap-3">
+						{#if selectable}
+							<Checkbox
+								class="mt-2"
+								checked={selected.has(item.id)}
+								onCheckedChange={(checked) => toggleItem(item.id, checked)}
+								aria-label={`Select ${item.description}`}
+							/>
+						{/if}
 						<div class="min-w-0 flex-1">
 							<Textarea
 								rows={1}
@@ -242,6 +344,7 @@
 								onkeydown={blurOnEnter}
 								aria-label="Description"
 								{@attach autosize}
+								{@attach focusWhen(item.id === focusItemId)}
 								class={descriptionInput}
 							/>
 							{#if itemSublabel(item)}

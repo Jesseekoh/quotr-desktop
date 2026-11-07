@@ -261,6 +261,80 @@ describe('quotes and invoices', () => {
 		expect(afterRemove.items.map((item) => item.description)).toEqual(['Installation']);
 	});
 
+	it('compresses selected items in one place into a single summed line', async () => {
+		const customer = await customers.createCustomer({ name: 'Compress Co' });
+		const { id: quoteId } = await quotes.createQuote({
+			customerId: customer.id,
+			label: 'ENDUSER_PRICE'
+		});
+		let quote = await quotes.addItem({
+			quoteId,
+			data: { description: 'Survey', unitPrice: 5_000 }
+		});
+		quote = await quotes.addSection({ quoteId, name: 'Accessories' });
+		const sectionId = quote.sections[0].id;
+		quote = await quotes.addOption({ quoteId, quoteSectionId: sectionId, name: 'Premium' });
+		const optionId = quote.sections[0].options[0].id;
+		for (const [description, unitPrice, quantity] of [
+			['Cable', 2_000, 10],
+			['Breaker', 15_000, 2],
+			['Lugs', 500, 8]
+		] as const) {
+			quote = await quotes.addItem({
+				quoteId,
+				data: { description, unitPrice, quantity },
+				quoteSectionId: sectionId
+			});
+		}
+		quote = await quotes.addItem({
+			quoteId,
+			data: { description: 'Surge protector', unitPrice: 30_000 },
+			quoteSectionId: sectionId,
+			quoteOptionId: optionId
+		});
+		const [cable, breaker, lugs] = quote.sections[0].items;
+		const before = quoteTotals(quote).overallMax;
+
+		await expect(quotes.compressItems({ quoteId, ids: [cable.id] })).rejects.toThrow(
+			/at least two/
+		);
+		await expect(
+			quotes.compressItems({
+				quoteId,
+				ids: [cable.id, quote.sections[0].options[0].items[0].id]
+			})
+		).rejects.toThrow(/same section or option/);
+
+		const result = await quotes.compressItems({ quoteId, ids: [breaker.id, cable.id] });
+		quote = result.quote;
+		expect(quote.sections[0].items.map((item) => item.description)).toEqual([
+			'Cable, Breaker',
+			'Lugs'
+		]);
+		expect(quote.sections[0].items[0]).toMatchObject({
+			id: result.itemId,
+			quantity: 1,
+			unitPrice: 50_000,
+			totalPrice: 50_000,
+			productId: null
+		});
+		expect(quoteTotals(quote).overallMax).toBe(before);
+
+		quote = await quotes.updateItem({
+			quoteId,
+			id: result.itemId,
+			data: { description: 'Cabling & protection' }
+		});
+		expect(quote.sections[0].items[0]).toMatchObject({
+			description: 'Cabling & protection',
+			unitPrice: 50_000
+		});
+		expect(lugs.description).toBe('Lugs');
+
+		// Keep later tests' dashboard stats unaffected.
+		await quotes.removeQuote(quoteId);
+	});
+
 	it('reports dashboard stats for sent quotes', async () => {
 		const [quote] = await quotes.getQuotes();
 		await quotes.updateQuote({ id: quote.id, status: 'SENT' });

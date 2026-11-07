@@ -19,7 +19,10 @@
 		onRemoveOption,
 		onItemChange,
 		onRemoveItem,
-		onMoveItem
+		onMoveItem,
+		onCompressItems,
+		focusItemId = null,
+		onFocused
 	}: {
 		section: QuoteSection;
 		onAddOption: () => void;
@@ -32,6 +35,9 @@
 		) => void;
 		onRemoveItem: (itemId: string) => void;
 		onMoveItem: (itemId: string, sectionId: string | null, optionId: string | null) => void;
+		onCompressItems: (itemIds: string[]) => void;
+		focusItemId?: string | null;
+		onFocused?: () => void;
 	} = $props();
 
 	let activeIndex = $state(0);
@@ -153,6 +159,9 @@
 					{onItemChange}
 					onRemove={onRemoveItem}
 					onMove={onMoveItem}
+					onCompress={onCompressItems}
+					{focusItemId}
+					{onFocused}
 				/>
 			</Tabs.Content>
 		{/if}
